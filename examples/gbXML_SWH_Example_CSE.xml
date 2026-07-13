@@ -1,0 +1,371 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  gbXML SWH Extension Example: CSE Target
+  Scenario: 24-unit multifamily, central HPWH plant, recirculation loop
+
+  CSE consumes:
+    PRIMARY:  ServiceWaterDrawProfile / ServiceWaterDraw  -> DHWDAYUSE / DHWUSE
+              DrawProfileIdRef on ServiceWaterLoad        -> associates load to day-use
+              ServiceWaterPiping with SegmentRole          -> DHWLOOPSEG / DHWLOOPBRANCH
+              WaterHeater (component detail)               -> DHWHEATER
+              ServiceWaterDistribution (recirc, mains)     -> DHWSYS / DHWLOOP
+    FALLBACK: ServiceWaterLoad peak x schedule             -> only if no DrawProfile
+    IGNORES:  LoopHeatLoss / RecircDesignFlowRate          -> uses segment geometry
+              ZoneAggregateDHWDemand                        -> sums per-Space
+              SystemSeasonalEfficiency                      -> models components
+              HPWH validation points                        -> uses Ecotope product model
+-->
+<gbXML xmlns="http://www.gbxml.org/schema"
+       temperatureUnit="F" lengthUnit="Feet" volumeUnit="Gallons"
+       useSIUnitsForResults="false" version="7.03">
+
+  <!-- ================================================================
+       SCHEDULES
+       CSE: uses these for mains temp and recirc pump operation
+       ================================================================ -->
+  <Schedule id="sch-mains-temp" type="Temp">
+    <Name>Monthly Mains Water Temperature</Name>
+  </Schedule>
+  <Schedule id="sch-recirc-pump" type="OnOff">
+    <Name>Recirc Pump Timer Schedule</Name>
+  </Schedule>
+  <Schedule id="sch-dhw-weekday" type="Fraction">
+    <Name>DHW Weekday Aggregate (fallback if no DrawProfile)</Name>
+  </Schedule>
+  <Schedule id="sch-profile-weekday" type="Fraction">
+    <Name>Draw Profile Applicability: Weekdays</Name>
+  </Schedule>
+  <Schedule id="sch-profile-weekend" type="Fraction">
+    <Name>Draw Profile Applicability: Weekends</Name>
+  </Schedule>
+
+
+  <!-- ================================================================
+       DRAW PROFILES (PRIMARY demand path for CSE)
+       CSE: DHWDAYUSE containing DHWUSE events
+       These are top-level, reusable across all 24 identical units.
+       ================================================================ -->
+
+  <!-- WEEKDAY DRAW PROFILE -->
+  <ServiceWaterDrawProfile id="dp-weekday">
+    <Name>MF Dwelling Unit Weekday Draws</Name>
+    <ServiceWaterDraws>
+
+      <!-- Morning shower: 7.8 min at 1.8 gpm, 105F mixed -->
+      <ServiceWaterDraw id="dp-wd-d01">
+        <EndUse>Shower</EndUse>
+        <StartHour>6.50</StartHour>
+        <DurationMinutes>7.8</DurationMinutes>
+        <FlowRate unit="GallonsPerMinute">1.8</FlowRate>
+        <MixedDeliveryTemperature unit="Fahrenheit">105</MixedDeliveryTemperature>
+        <EventId>shower-am</EventId>
+        <IsHeatRecoveredByDrain>true</IsHeatRecoveredByDrain>
+        <DrainHeatRecoveryEfficiency>0.42</DrainHeatRecoveryEfficiency>
+      </ServiceWaterDraw>
+
+      <!-- Morning faucet (face/hands): 2 min at 0.5 gpm -->
+      <ServiceWaterDraw id="dp-wd-d02">
+        <EndUse>Faucet</EndUse>
+        <StartHour>6.75</StartHour>
+        <DurationMinutes>2.0</DurationMinutes>
+        <FlowRate unit="GallonsPerMinute">0.5</FlowRate>
+        <MixedDeliveryTemperature unit="Fahrenheit">100</MixedDeliveryTemperature>
+      </ServiceWaterDraw>
+
+      <!-- Morning kitchen faucet: 4 min at 1.0 gpm -->
+      <ServiceWaterDraw id="dp-wd-d03">
+        <EndUse>Faucet</EndUse>
+        <StartHour>7.25</StartHour>
+        <DurationMinutes>4.0</DurationMinutes>
+        <FlowRate unit="GallonsPerMinute">1.0</FlowRate>
+        <MixedDeliveryTemperature unit="Fahrenheit">110</MixedDeliveryTemperature>
+      </ServiceWaterDraw>
+
+      <!-- Midday faucet: 1.5 min -->
+      <ServiceWaterDraw id="dp-wd-d04">
+        <EndUse>Faucet</EndUse>
+        <StartHour>12.25</StartHour>
+        <DurationMinutes>1.5</DurationMinutes>
+        <FlowRate unit="GallonsPerMinute">0.5</FlowRate>
+        <MixedDeliveryTemperature unit="Fahrenheit">105</MixedDeliveryTemperature>
+      </ServiceWaterDraw>
+
+      <!-- Dishwasher cycle: 3.1 gal total, all-hot -->
+      <ServiceWaterDraw id="dp-wd-d05">
+        <EndUse>DishWasher</EndUse>
+        <StartHour>19.50</StartHour>
+        <Volume unit="Gallons">3.1</Volume>
+        <HotWaterFraction>1.0</HotWaterFraction>
+      </ServiceWaterDraw>
+
+      <!-- Clothes washer: 5.8 gal total, 30% hot fraction -->
+      <ServiceWaterDraw id="dp-wd-d06">
+        <EndUse>ClothesWasher</EndUse>
+        <StartHour>20.00</StartHour>
+        <Volume unit="Gallons">5.8</Volume>
+        <HotWaterFraction>0.30</HotWaterFraction>
+      </ServiceWaterDraw>
+
+      <!-- Evening shower: 6.5 min -->
+      <ServiceWaterDraw id="dp-wd-d07">
+        <EndUse>Shower</EndUse>
+        <StartHour>21.00</StartHour>
+        <DurationMinutes>6.5</DurationMinutes>
+        <FlowRate unit="GallonsPerMinute">1.8</FlowRate>
+        <MixedDeliveryTemperature unit="Fahrenheit">105</MixedDeliveryTemperature>
+        <EventId>shower-pm</EventId>
+        <IsHeatRecoveredByDrain>true</IsHeatRecoveredByDrain>
+        <DrainHeatRecoveryEfficiency>0.42</DrainHeatRecoveryEfficiency>
+      </ServiceWaterDraw>
+
+      <!-- Evening faucet -->
+      <ServiceWaterDraw id="dp-wd-d08">
+        <EndUse>Faucet</EndUse>
+        <StartHour>21.50</StartHour>
+        <DurationMinutes>2.0</DurationMinutes>
+        <FlowRate unit="GallonsPerMinute">0.5</FlowRate>
+        <MixedDeliveryTemperature unit="Fahrenheit">100</MixedDeliveryTemperature>
+      </ServiceWaterDraw>
+
+    </ServiceWaterDraws>
+    <ApplicabilityScheduleIdRef scheduleIdRef="sch-profile-weekday"/>
+  </ServiceWaterDrawProfile>
+
+  <!-- WEEKEND DRAW PROFILE (shifted timing, added bath) -->
+  <ServiceWaterDrawProfile id="dp-weekend">
+    <Name>MF Dwelling Unit Weekend Draws</Name>
+    <ServiceWaterDraws>
+
+      <ServiceWaterDraw id="dp-we-d01">
+        <EndUse>Shower</EndUse>
+        <StartHour>8.50</StartHour>
+        <DurationMinutes>9.0</DurationMinutes>
+        <FlowRate unit="GallonsPerMinute">1.8</FlowRate>
+        <MixedDeliveryTemperature unit="Fahrenheit">105</MixedDeliveryTemperature>
+        <EventId>shower-am-we</EventId>
+        <IsHeatRecoveredByDrain>true</IsHeatRecoveredByDrain>
+        <DrainHeatRecoveryEfficiency>0.42</DrainHeatRecoveryEfficiency>
+      </ServiceWaterDraw>
+
+      <ServiceWaterDraw id="dp-we-d02">
+        <EndUse>Bath</EndUse>
+        <StartHour>20.00</StartHour>
+        <Volume unit="Gallons">30</Volume>
+        <MixedDeliveryTemperature unit="Fahrenheit">102</MixedDeliveryTemperature>
+      </ServiceWaterDraw>
+
+      <ServiceWaterDraw id="dp-we-d03">
+        <EndUse>Faucet</EndUse>
+        <StartHour>9.00</StartHour>
+        <DurationMinutes>5.0</DurationMinutes>
+        <FlowRate unit="GallonsPerMinute">1.0</FlowRate>
+        <MixedDeliveryTemperature unit="Fahrenheit">110</MixedDeliveryTemperature>
+      </ServiceWaterDraw>
+
+      <ServiceWaterDraw id="dp-we-d04">
+        <EndUse>ClothesWasher</EndUse>
+        <StartHour>10.50</StartHour>
+        <Volume unit="Gallons">11.6</Volume>
+        <HotWaterFraction>0.30</HotWaterFraction>
+      </ServiceWaterDraw>
+
+      <ServiceWaterDraw id="dp-we-d05">
+        <EndUse>DishWasher</EndUse>
+        <StartHour>13.00</StartHour>
+        <Volume unit="Gallons">3.1</Volume>
+        <HotWaterFraction>1.0</HotWaterFraction>
+      </ServiceWaterDraw>
+
+    </ServiceWaterDraws>
+    <ApplicabilityScheduleIdRef scheduleIdRef="sch-profile-weekend"/>
+  </ServiceWaterDrawProfile>
+
+
+  <!-- ================================================================
+       SERVICE WATER SYSTEM
+       CSE: DHWSYS + DHWHEATER + DHWLOOP + DHWLOOPSEG/BRANCH
+       ================================================================ -->
+  <ServiceWaterSystem id="sws-central-dhw">
+    <Name>Central Domestic Hot Water System</Name>
+
+    <ServiceWaterHeatingPlant id="plant-central">
+      <Name>Central HPWH Plant</Name>
+
+      <WaterHeaters>
+        <!-- CSE: DHWHEATER
+             CSE uses Ecotope product model, so only basic equipment params
+             are consumed; validation points are informational -->
+        <WaterHeater id="wh-hpwh-1">
+          <Name>Commercial HPWH Unit 1 (CO2)</Name>
+          <WaterHeaterType>CentralHeatPumpWaterHeater</WaterHeaterType>
+          <FuelSource>Electricity</FuelSource>
+          <InputCapacity unit="BtuPerHour">18000</InputCapacity>
+          <RatedCapacity unit="BtuPerHour">54000</RatedCapacity>
+          <UniformEnergyFactor>3.40</UniformEnergyFactor>
+          <SetpointTemperature unit="Fahrenheit">120</SetpointTemperature>
+          <CutInTemperatureDelta unit="Fahrenheit">12</CutInTemperatureDelta>
+          <CompressorZoneIdRef zoneIdRef="zone-mech-room"/>
+          <BackupHeaterFuelSource>Electricity</BackupHeaterFuelSource>
+          <BackupInputCapacity unit="BtuPerHour">15000</BackupInputCapacity>
+          <BackupSetpointTemperature unit="Fahrenheit">110</BackupSetpointTemperature>
+          <StorageTank id="tank-hpwh-1">
+            <TankRole>Primary</TankRole>
+            <TankType>Stratified</TankType>
+            <StorageVolume unit="Gallons">119</StorageVolume>
+            <StandbyLossCoefficient unit="BtuPerHrF">1.8</StandbyLossCoefficient>
+            <TankZoneIdRef zoneIdRef="zone-mech-room"/>
+          </StorageTank>
+        </WaterHeater>
+
+        <WaterHeater id="wh-hpwh-2">
+          <Name>Commercial HPWH Unit 2 (CO2)</Name>
+          <WaterHeaterType>CentralHeatPumpWaterHeater</WaterHeaterType>
+          <FuelSource>Electricity</FuelSource>
+          <InputCapacity unit="BtuPerHour">18000</InputCapacity>
+          <RatedCapacity unit="BtuPerHour">54000</RatedCapacity>
+          <UniformEnergyFactor>3.40</UniformEnergyFactor>
+          <SetpointTemperature unit="Fahrenheit">120</SetpointTemperature>
+          <CompressorZoneIdRef zoneIdRef="zone-mech-room"/>
+          <SourceAirConfiguration>DuctedMixed</SourceAirConfiguration>
+          <DuctedOutdoorAirFraction>0.7</DuctedOutdoorAirFraction>
+          <HPWHProductModelDesignation>Sanden_GEU-45HPA</HPWHProductModelDesignation>
+          <BackupHeaterFuelSource>Electricity</BackupHeaterFuelSource>
+          <BackupInputCapacity unit="BtuPerHour">15000</BackupInputCapacity>
+          <StorageTank id="tank-hpwh-2">
+            <TankRole>Primary</TankRole>
+            <TankType>Stratified</TankType>
+            <StorageVolume unit="Gallons">119</StorageVolume>
+            <StandbyLossCoefficient unit="BtuPerHrF">1.8</StandbyLossCoefficient>
+            <TankZoneIdRef zoneIdRef="zone-mech-room"/>
+          </StorageTank>
+        </WaterHeater>
+      </WaterHeaters>
+
+      <!-- SWING TANK [GAP #4]
+           CSE: separate DHWHEATER with whType=StorageTank, linked to primary.
+           Buffers between intermittent HPWH operation and continuous recirc.
+           Temperature-maintenance setpoint triggers callback to primary HPWH. -->
+      <StorageTanks>
+        <StorageTank id="tank-swing">
+          <Name>Swing/Buffer Tank</Name>
+          <TankRole>Swing</TankRole>
+          <TankType>Mixed</TankType>
+          <StorageVolume unit="Gallons">120</StorageVolume>
+          <StandbyLossCoefficient unit="BtuPerHrF">2.1</StandbyLossCoefficient>
+          <TankZoneIdRef zoneIdRef="zone-mech-room"/>
+          <LinkedPrimaryTankIdRef tankIdRef="tank-hpwh-1"/>
+          <SwingTankMaintenanceSetpoint unit="Fahrenheit">115</SwingTankMaintenanceSetpoint>
+        </StorageTank>
+      </StorageTanks>
+    </ServiceWaterHeatingPlant>
+
+
+    <!-- ── DISTRIBUTION with CSE segment/branch topology ────────── -->
+    <ServiceWaterDistribution id="dist-central">
+      <Name>Central Recirculation Loop</Name>
+      <DesignSupplyTemperature unit="Fahrenheit">120</DesignSupplyTemperature>
+      <DesignInletTemperature unit="Fahrenheit">50</DesignInletTemperature>
+      <EnteringWaterTempScheduleIdRef scheduleIdRef="sch-mains-temp"/>
+      <IsCentralSystem>true</IsCentralSystem>
+
+      <!-- Simplified distribution [GAP #3]
+           CSE: wsDSM. For this recirc system the geometric piping below
+           is primary; SimplifiedDistributionType is informational.
+           For non-recirc residential, this would be the PRIMARY path. -->
+      <SimplifiedDistributionType>Recirculating</SimplifiedDistributionType>
+      <DistributionSystemMultiplier>1.0</DistributionSystemMultiplier>
+
+      <RecirculationControlType>Timer</RecirculationControlType>
+      <RecirculationPumpPower unit="Watts">90</RecirculationPumpPower>
+      <RecirculationScheduleIdRef scheduleIdRef="sch-recirc-pump"/>
+
+      <ServiceWaterPipings>
+
+        <!-- SUPPLY MAIN -> CSE DHWLOOPSEG (wgTy=supply)
+             Standby loss = f(recirc flow, UA, ambient) -->
+        <ServiceWaterPiping id="seg-supply">
+          <Name>Supply Main Riser</Name>
+          <NominalDiameter unit="Inches">1.25</NominalDiameter>
+          <PipeLength unit="Feet">140</PipeLength>
+          <InsulationRValue unit="HrFt2FPerBtu">4.3</InsulationRValue>
+          <PipingLocation>UnconditionedSpace</PipingLocation>
+          <SegmentRole>SupplyMain</SegmentRole>
+          <SegmentMultiplier>1</SegmentMultiplier>
+          <RecirculationFlowRate unit="GallonsPerMinute">2.0</RecirculationFlowRate>
+          <FractionOfLoopFlowWhileNoDraw>1.0</FractionOfLoopFlowWhileNoDraw>
+
+          <!-- UNIT TWIGS nested under supply main
+               -> CSE DHWLOOPBRANCH (per-draw waste) -->
+          <ChildPiping>
+            <ServiceWaterPiping id="br-unit-typical">
+              <Name>Unit Branch Twig (x24)</Name>
+              <NominalDiameter unit="Inches">0.5</NominalDiameter>
+              <PipeLength unit="Feet">12</PipeLength>
+              <InsulationRValue unit="HrFt2FPerBtu">2.0</InsulationRValue>
+              <PipingLocation>ConditionedSpace</PipingLocation>
+              <SegmentRole>Twig</SegmentRole>
+              <SegmentMultiplier>24</SegmentMultiplier>
+              <BranchWasteVolume unit="Gallons">0.29</BranchWasteVolume>
+              <BranchFlowRate unit="GallonsPerMinute">1.8</BranchFlowRate>
+            </ServiceWaterPiping>
+          </ChildPiping>
+        </ServiceWaterPiping>
+
+        <!-- RETURN MAIN -> CSE DHWLOOPSEG (wgTy=return) -->
+        <ServiceWaterPiping id="seg-return">
+          <Name>Return Main</Name>
+          <NominalDiameter unit="Inches">0.75</NominalDiameter>
+          <PipeLength unit="Feet">140</PipeLength>
+          <InsulationRValue unit="HrFt2FPerBtu">3.1</InsulationRValue>
+          <PipingLocation>UnconditionedSpace</PipingLocation>
+          <SegmentRole>ReturnMain</SegmentRole>
+          <RecirculationFlowRate unit="GallonsPerMinute">2.0</RecirculationFlowRate>
+          <FractionOfLoopFlowWhileNoDraw>1.0</FractionOfLoopFlowWhileNoDraw>
+        </ServiceWaterPiping>
+
+      </ServiceWaterPipings>
+    </ServiceWaterDistribution>
+
+  </ServiceWaterSystem>
+
+
+  <!-- ================================================================
+       SERVICE WATER ZONE
+       CSE: groups spaces into DHWSYS demand side
+       ================================================================ -->
+  <ServiceWaterZone id="swz-residential">
+    <Name>Residential DHW Zone</Name>
+    <ServiceWaterHeatingSpaceType>Multifamily</ServiceWaterHeatingSpaceType>
+    <ServiceWaterSystemId serviceWaterSystemIdRef="sws-central-dhw"/>
+    <SpaceIds>
+      <SpaceId spaceIdRef="space-unit-01"/>
+    </SpaceIds>
+  </ServiceWaterZone>
+
+
+  <!-- ================================================================
+       SPACE-LEVEL LOADS with DrawProfileIdRef (PRIMARY for CSE)
+       CSE reads the DrawProfile; the peak x schedule is the fallback.
+       ================================================================ -->
+  <Space id="space-unit-01">
+    <Name>Dwelling Unit 01 (Representative)</Name>
+
+    <ServiceWaterLoad id="swl-unit01-domestic">
+      <Name>All Domestic DHW</Name>
+      <ServiceWaterLoadType>Domestic</ServiceWaterLoadType>
+      <!-- Aggregate peak x schedule (fallback for non-CSE engines) -->
+      <WaterUseValue unit="VolumeFlowRate">1.8</WaterUseValue>
+      <WaterUseScheduleIdRef scheduleIdRef="sch-dhw-weekday"/>
+      <HotWaterSupplyTemperature unit="Fahrenheit">105</HotWaterSupplyTemperature>
+      <InletColdWaterTemperature unit="Fahrenheit">50</InletColdWaterTemperature>
+      <IsHeatRecoveredByDrain>true</IsHeatRecoveredByDrain>
+      <DrainHeatRecoveryType>Vertical</DrainHeatRecoveryType>
+      <DrainHeatRecoveryEfficiency>0.42</DrainHeatRecoveryEfficiency>
+      <!-- CSE PRIMARY: discrete draw events via profile reference -->
+      <DrawProfileIdRef drawProfileIdRef="dp-weekday"/>
+    </ServiceWaterLoad>
+
+    <ServiceWaterZoneId serviceWaterZoneIdRef="swz-residential"/>
+  </Space>
+
+</gbXML>

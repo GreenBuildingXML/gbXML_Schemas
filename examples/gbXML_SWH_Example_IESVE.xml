@@ -1,0 +1,229 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  gbXML SWH Extension Example: IES-VE Target
+  Scenario: 24-unit multifamily, central HPWH plant, recirculation loop
+
+  IES-VE consumes:
+    PRIMARY:  ZoneAggregateDHWDemand + schedule      -> DHW Zones dialog demand
+              SystemSeasonalEfficiency                -> Apache Systems generator eff
+              WaterHeater (basic type/fuel/COP)       -> ApacheHVAC GHS configuration
+              StorageTank (volume, UA, zone)           -> ApacheHVAC DHW tank
+              DesignSupplyTemperature                  -> loop supply setpoint
+    FALLBACK: ServiceWaterLoad (room-level peak)       -> BTM Space Conditions tab
+    IGNORES:  DrawProfile (event-based draws)          -> not consumed
+              SegmentRole / BranchWasteVolume           -> not consumed
+              Per-segment piping geometry              -> simplified in Apache Systems
+              LoopHeatLoss (uses internal recirc model) -> informational
+              HPWH validation points                    -> uses COP-vs-temp internal model
+              ASHRAE 90.1 space type                    -> uses NCM activity types (UK/EU)
+
+  NOTE: IES-VE does NOT import SWH data from gbXML; it reads geometry only.
+  This file is the source-of-truth for a Python script (iesve API / VEScripts)
+  that programmatically configures Apache Systems, ApacheHVAC, and the DHW
+  Zones dialog from the schema data.
+-->
+<gbXML xmlns="http://www.gbxml.org/schema"
+       temperatureUnit="F" lengthUnit="Feet" volumeUnit="Gallons"
+       useSIUnitsForResults="false" version="7.03">
+
+  <!-- ================================================================
+       SCHEDULES
+       IES-VE: VE Profiles (modulating profiles in Apache/ApacheHVAC)
+       ================================================================ -->
+  <Schedule id="sch-dhw-occ" type="Fraction">
+    <Name>DHW Demand Profile (occupancy-linked)</Name>
+    <!-- IES-VE: fractional profile modulating DHW zone demand,
+         optionally linked to room occupancy -->
+  </Schedule>
+  <Schedule id="sch-dhw-weekday" type="Fraction">
+    <Name>DHW Weekday Hourly Fractions</Name>
+    <!-- IES-VE: independent modulating profile option -->
+  </Schedule>
+  <Schedule id="sch-mains-temp" type="Temp">
+    <Name>Monthly Mains Water Temperature</Name>
+    <!-- IES-VE: cold water inlet temp (default 50K rise if not set) -->
+  </Schedule>
+
+
+  <!-- ================================================================
+       SERVICE WATER SYSTEM
+       IES-VE: Apache Systems (DHW tab) + ApacheHVAC plant loop
+       ================================================================ -->
+  <ServiceWaterSystem id="sws-central-dhw">
+    <Name>Central Domestic Hot Water System</Name>
+
+    <ServiceWaterHeatingPlant id="plant-central">
+      <Name>Central HPWH Plant</Name>
+
+      <!-- SystemSeasonalEfficiency (PRIMARY for IES-VE)
+           IES-VE: Apache Systems -> Hot Water tab -> Generator
+           Seasonal Efficiency. For HPWH this is annualized COP
+           including backup firing and cycling.
+           2.40 = system-level annual COP accounting for backup
+           resistance in cold months (rated HPWH COP = 3.40). -->
+      <SystemSeasonalEfficiency>2.40</SystemSeasonalEfficiency>
+
+      <WaterHeaters>
+
+        <!-- PRIMARY HPWH
+             IES-VE: ApacheHVAC Generic Heat Source (GHS)
+             with "Air-source heat pump" checkbox enabled.
+             GHS -> ASHP tab: COP, source zone, backup capacity -->
+        <WaterHeater id="wh-hpwh-combined">
+          <Name>Central HPWH Plant (combined for IES-VE)</Name>
+          <WaterHeaterType>CentralHeatPumpWaterHeater</WaterHeaterType>
+          <FuelSource>Electricity</FuelSource>
+          <EfficiencyMetricType>UniformEnergyFactor</EfficiencyMetricType>
+
+          <InputCapacity unit="BtuPerHour">36000</InputCapacity>
+          <RatedCapacity unit="BtuPerHour">108000</RatedCapacity>
+          <UniformEnergyFactor>3.40</UniformEnergyFactor>
+
+          <!-- IES-VE: ASHP setpoint on the GHS -->
+          <SetpointTemperature unit="Fahrenheit">120</SetpointTemperature>
+
+          <!-- IES-VE: source zone for ASHP air-side
+               "Inlet Air Zone" in GHS ASHP tab -->
+          <CompressorZoneIdRef zoneIdRef="zone-mech-room"/>
+
+          <!-- HPWH source air [GAP #5]
+               IES-VE: GHS ASHP tab air source configuration -->
+          <SourceAirConfiguration>DuctedMixed</SourceAirConfiguration>
+          <DuctedOutdoorAirFraction>0.7</DuctedOutdoorAirFraction>
+          <HPWHProductModelDesignation>Sanden_GEU-45HPA</HPWHProductModelDesignation>
+
+          <!-- IES-VE: Heating equipment (backup) within GHS dialog -->
+          <BackupHeaterFuelSource>Electricity</BackupHeaterFuelSource>
+          <BackupInputCapacity unit="BtuPerHour">30000</BackupInputCapacity>
+          <BackupSetpointTemperature unit="Fahrenheit">110</BackupSetpointTemperature>
+
+          <!-- IES-VE: DHW tank in Apache Systems or ApacheHVAC
+               Tank volume, UA, and ambient zone consumed directly -->
+          <StorageTank id="tank-combined">
+            <Name>Combined DHW Storage (238 gal)</Name>
+            <TankRole>Primary</TankRole>
+            <TankType>Mixed</TankType>
+            <StorageVolume unit="Gallons">238</StorageVolume>
+            <StandbyLossCoefficient unit="BtuPerHrF">3.6</StandbyLossCoefficient>
+            <TankLocation>ConditionedSpace</TankLocation>
+            <TankZoneIdRef zoneIdRef="zone-mech-room"/>
+          </StorageTank>
+
+        </WaterHeater>
+      </WaterHeaters>
+
+      <!-- SWING TANK [GAP #4]
+           IES-VE: modeled as additional storage in ApacheHVAC DHW tank
+           configuration with temperature-maintenance controls -->
+      <StorageTanks>
+        <StorageTank id="tank-swing">
+          <Name>Swing/Buffer Tank</Name>
+          <TankRole>Swing</TankRole>
+          <TankType>Mixed</TankType>
+          <StorageVolume unit="Gallons">120</StorageVolume>
+          <StandbyLossCoefficient unit="BtuPerHrF">2.1</StandbyLossCoefficient>
+          <TankZoneIdRef zoneIdRef="zone-mech-room"/>
+          <LinkedPrimaryTankIdRef tankIdRef="tank-combined"/>
+          <SwingTankMaintenanceSetpoint unit="Fahrenheit">115</SwingTankMaintenanceSetpoint>
+        </StorageTank>
+      </StorageTanks>
+    </ServiceWaterHeatingPlant>
+
+
+    <!-- ── DISTRIBUTION ─────────────────────────────────────────── -->
+    <ServiceWaterDistribution id="dist-central">
+      <Name>Central Recirculation Loop</Name>
+
+      <!-- IES-VE: DHW loop supply temperature in ApacheHVAC
+           Note: IES-VE default assumes 50K (Celsius) rise from mains
+           to hot water; explicit temps here override that default -->
+      <DesignSupplyTemperature unit="Fahrenheit">120</DesignSupplyTemperature>
+      <DesignInletTemperature unit="Fahrenheit">50</DesignInletTemperature>
+      <EnteringWaterTempScheduleIdRef scheduleIdRef="sch-mains-temp"/>
+
+      <IsCentralSystem>true</IsCentralSystem>
+
+      <!-- Simplified distribution [GAP #3]
+           IES-VE: Apache Systems uses simplified recirc model internally;
+           this classifies the system type for the VEScript configurator -->
+      <SimplifiedDistributionType>Recirculating</SimplifiedDistributionType>
+      <DistributionSystemMultiplier>1.0</DistributionSystemMultiplier>
+
+      <RecirculationControlType>Timer</RecirculationControlType>
+
+      <!-- IES-VE: ApacheHVAC secondary circulation pump power -->
+      <RecirculationPumpPower unit="Watts">90</RecirculationPumpPower>
+
+      <!-- IES-VE: secondary circulation heat loss
+           (Apache Systems models recirc loss internally, but this
+            provides an explicit value for the VEScript configurator) -->
+      <LoopHeatLoss unit="BtuPerHour">3200</LoopHeatLoss>
+      <RecirculationDesignFlowRate unit="GallonsPerMinute">2.0</RecirculationDesignFlowRate>
+
+      <!-- Piping geometry: NOT directly consumed by IES-VE
+           (Apache Systems uses simplified recirc loss model) -->
+
+    </ServiceWaterDistribution>
+
+  </ServiceWaterSystem>
+
+
+  <!-- ================================================================
+       SERVICE WATER ZONE with AGGREGATE DEMAND (PRIMARY for IES-VE)
+
+       IES-VE DHW Zones dialog: "zone-entered demand" mode.
+       The VEScript reads ZoneAggregateDHWDemand and assigns it as the
+       zone-level DHW demand in the DHW Zones Properties dialog, with
+       the linked modulating profile from ZoneAggregateDHWDemandScheduleIdRef.
+
+       This is the PRIMARY demand path for IES-VE. Per-Space loads are
+       the fallback (IES-VE "sum of room demands" mode).
+       ================================================================ -->
+  <ServiceWaterZone id="swz-residential">
+    <Name>Residential DHW Zone (24 units)</Name>
+    <ServiceWaterHeatingSpaceType>Multifamily</ServiceWaterHeatingSpaceType>
+    <ServiceWaterSystemId serviceWaterSystemIdRef="sws-central-dhw"/>
+
+    <!-- ZONE AGGREGATE DEMAND (Part F.1)
+         IES-VE: DHW Zone Properties -> Demand = 13.4 kW
+         Computed: 24 units x ~28 gal/day/unit at 70F delta-T
+         = ~24 x 28 x 8.33 x 70 / 24hr = 13,400 W = 13.4 kW avg
+         Modulated by sch-dhw-occ to produce hourly variation -->
+    <ZoneAggregateDHWDemand unit="Power">45700</ZoneAggregateDHWDemand>
+    <ZoneAggregateDHWDemandScheduleIdRef scheduleIdRef="sch-dhw-occ"/>
+
+    <SpaceIds>
+      <SpaceId spaceIdRef="space-unit-01"/>
+      <!-- ...spaceIdRef for units 02-24... -->
+    </SpaceIds>
+  </ServiceWaterZone>
+
+
+  <!-- ================================================================
+       SPACE-LEVEL LOADS (FALLBACK for IES-VE)
+       IES-VE can also read room-level demands via Building Template
+       Manager Space Conditions tab. When ZoneAggregateDHWDemand is
+       present, per-Space loads are informational for IES-VE but remain
+       primary for EnergyPlus and CSE.
+       ================================================================ -->
+  <Space id="space-unit-01">
+    <Name>Dwelling Unit 01 (Representative)</Name>
+
+    <!-- IES-VE fallback: BTM Space Conditions -> DHW consumption
+         Peak demand with occupancy-linked modulating profile -->
+    <ServiceWaterLoad id="swl-unit01-all">
+      <Name>All Domestic DHW per Unit</Name>
+      <ServiceWaterLoadType>Domestic</ServiceWaterLoadType>
+      <WaterUseValue unit="VolumeFlowRate">1.8</WaterUseValue>
+      <WaterUseScheduleIdRef scheduleIdRef="sch-dhw-weekday"/>
+      <HotWaterSupplyTemperature unit="Fahrenheit">105</HotWaterSupplyTemperature>
+      <InletColdWaterTemperature unit="Fahrenheit">50</InletColdWaterTemperature>
+      <IsHeatRecoveredByDrain>true</IsHeatRecoveredByDrain>
+      <DrainHeatRecoveryType>Vertical</DrainHeatRecoveryType>
+      <DrainHeatRecoveryEfficiency>0.42</DrainHeatRecoveryEfficiency>
+    </ServiceWaterLoad>
+
+    <ServiceWaterZoneId serviceWaterZoneIdRef="swz-residential"/>
+  </Space>
+
+</gbXML>

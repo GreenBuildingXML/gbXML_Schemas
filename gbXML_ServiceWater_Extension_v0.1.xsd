@@ -1,0 +1,2237 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ gbXML SERVICE WATER SYSTEM EXTENSION SCHEMA
+ Version: 0.1 (Draft Proposal)
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+ PURPOSE
+ ~~~~~~~
+ This extension adds comprehensive service water system modeling to gbXML,
+ covering both:
+ (A) Service HOT water plant and loads (heated water demand and supply)
+ (B) Cold/ambient water loads (irrigation, toilet flushing, cooling tower
+ makeup, boiler makeup, pool fill, process water, vehicle wash, etc.)
+
+ STANDARDS ALIGNMENT
+ ~~~~~~~~~~~~~~~~~~~
+ - ASHRAE Standard 229P Ruleset Evaluation Schema (RES)
+ github.com/open229/ruleset-model-description-schema (develop branch)
+ ServiceWaterHeatingDistributionSystem, ServiceWaterHeatingEquipment,
+ Tank, SolarThermal, ServiceWaterHeatingUse, ServiceWaterPiping,
+ ServiceWaterHeaterValidationPoint, HPWHCapacityValidationPoint,
+ HPWHPowerValidationPoint data groups
+ - ASHRAE 90.1-2019 Section 7 (Service Water Heating)
+ Table 7.8 space-type categories → serviceWaterHeatingSpaceTypeEnum
+ Table 7.8 equipment efficiency requirements → efficiency fields
+ Section 7.4.4 recirculation controls → recirculationControlTypeEnum
+ - simulation engine water heater object, WaterHeater:Stratified,
+ WaterHeater:HeatPump:*, WaterUse:Equipment, WaterUse:Connections
+
+ HOW THIS INTEGRATES INTO MAIN gbXML SCHEMA
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ Required additions to existing gbXML root element (gbXML element content model):
+ <xsd:element ref="ServiceWaterSystem" minOccurs="0" maxOccurs="unbounded"/>
+ <xsd:element ref="ServiceWaterZone" minOccurs="0" maxOccurs="unbounded"/>
+
+ Required additions to existing Space element content:
+ <xsd:element ref="ServiceWaterLoad" minOccurs="0" maxOccurs="unbounded"/>
+ <xsd:element ref="ColdWaterLoad" minOccurs="0" maxOccurs="unbounded"/>
+ <xsd:element name="ServiceWaterZoneId".../> (ID reference)
+ <xsd:element name="ServiceWaterHeatingSpaceType".../> (compliance param)
+
+ Required additions to existing Building element content:
+ <xsd:element ref="ColdWaterLoad" minOccurs="0" maxOccurs="unbounded"/>
+ <xsd:element name="ServiceWaterSystemId".../> (ID reference)
+
+ Recommended additions to existing scheduleTypeEnum:
+ HotWaterUseFraction, ColdWaterUseFraction,
+ WaterHeaterSetpoint, WaterHeaterOperation
+
+ Recommended additions to existing loopTypeEnum (HydronicLoop):
+ DomesticHotWater, ServiceWaterReturn
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-->
+<xsd:schema
+ xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+ xmlns="http://www.gbxml.org/schema"
+ targetNamespace="http://www.gbxml.org/schema"
+ elementFormDefault="unqualified"
+ attributeFormDefault="unqualified"
+ version="0.1-SWH-draft">
+
+
+ <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ PART 1 — ENUMERATIONS
+ All derived from or harmonized with ASHRAE 229P RES enumerations
+ and ASHRAE 90.1-2019 Section 7 definitions.
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+
+ <!--
+ waterHeaterTypeEnum
+ Aligned with ASHRAE 229P ServiceWaterHeatingEquipmentOptions and
+ ASHRAE 90.1-2019 Table 7.8 equipment categories.
+ -->
+ <xsd:simpleType name="waterHeaterTypeEnum">
+ <xsd:annotation>
+ <xsd:documentation>
+ Classification of service water heating equipment type.
+ Aligned with ASHRAE Standard 229P ServiceWaterHeatingEquipmentOptions
+ and ASHRAE 90.1-2019 Table 7.8 commercial equipment categories.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="Storage">
+ <xsd:annotation><xsd:documentation>
+ Conventional storage water heater (gas-fired or electric resistance).
+ Covers both residential and commercial storage configurations.
+ ASHRAE 90.1-2019 Table 7.8: Consumer Storage, Commercial Storage.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Instantaneous">
+ <xsd:annotation><xsd:documentation>
+ Instantaneous (tankless) water heater. Heats water on demand with no storage.
+ ASHRAE 90.1-2019 Table 7.8: Consumer Instantaneous, Commercial Instantaneous.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="HeatPump">
+ <xsd:annotation><xsd:documentation>
+ Heat pump water heater (HPWH). Uses a refrigeration cycle to transfer heat
+ from ambient air (or ground) to the water. Covers integrated and split configurations,
+ both residential (wrapped condenser) and commercial (pumped condenser) types.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="CentralHeatPumpWaterHeater">
+ <xsd:annotation><xsd:documentation>
+ Central heat pump water heater serving multiple dwelling units or zones from a
+ single plant. Common in multifamily buildings with centralized DHW and unit
+ recirculation branches. Distinguishes from single-unit HeatPump for compliance.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Solar">
+ <xsd:annotation><xsd:documentation>
+ Solar water heater with solar thermal collectors as the primary heat source,
+ typically with electric or gas backup. See SolarThermalCollector child element.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Indirect">
+ <xsd:annotation><xsd:documentation>
+ Indirect water heater. Uses an internal heat exchanger connected to a separate
+ boiler or heating hot water loop (referenced via SourceHydronicLoopIdRef).
+ No internal burner or element; heat source is the connected loop.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Desuperheater">
+ <xsd:annotation><xsd:documentation>
+ Desuperheater heat recovery water heater. Recovers waste heat from a
+ refrigeration or HVAC compressor. Modeled via DesuperheaterHeatRecovery child.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="HotWaterSupplyBoiler">
+ <xsd:annotation><xsd:documentation>
+ Hot water supply boiler dedicated to service water heating.
+ ASHRAE 90.1-2019 Table 7.8: Hot Water Supply Boiler category (input &gt; 75,000 Btu/h).
+ Thermal efficiency requirements apply per Table 7.8.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="CombinationBoiler">
+ <xsd:annotation><xsd:documentation>
+ Combination space-heating and service water heating boiler (combi-boiler).
+ Single appliance serves both space heating and DHW loads.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Other">
+ <xsd:annotation><xsd:documentation>
+ Equipment type not covered by other enumeration values.
+ Use Description field to provide additional detail.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+
+ <!--
+ waterHeaterFuelTypeEnum
+ Aligned with ASHRAE 229P EnergySourceOptions.
+ Supplements the existing gbXML resourceTypeEnum for water heater contexts.
+ -->
+ <xsd:simpleType name="waterHeaterFuelTypeEnum">
+ <xsd:annotation>
+ <xsd:documentation>
+ Fuel or energy source for service water heating equipment.
+ Aligned with ASHRAE Standard 229P EnergySourceOptions enumeration.
+ Supplements the existing gbXML resourceTypeEnum for water heater applications.
+ fuel type strings are noted for mapping reference.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="Electricity">
+ <xsd:annotation><xsd:documentation>Electric resistance or heat pump.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="NaturalGas">
+ <xsd:annotation><xsd:documentation>Natural gas.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Propane">
+ <xsd:annotation><xsd:documentation>Liquefied petroleum gas / propane.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="FuelOilNo1">
+ <xsd:annotation><xsd:documentation>No. 1 fuel oil (kerosene).</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="FuelOilNo2">
+ <xsd:annotation><xsd:documentation>No. 2 fuel oil (heating oil).</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Steam">
+ <xsd:annotation><xsd:documentation>
+ Steam (district or on-site boiler) used as indirect heat source via heat exchanger.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="DistrictHotWater">
+ <xsd:annotation><xsd:documentation>
+ Purchased district hot water used as indirect heat source.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Solar">
+ <xsd:annotation><xsd:documentation>
+ Solar thermal energy as the sole energy source (no backup).
+ Used for SolarThermalCollector-only configurations.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Other">
+ <xsd:annotation><xsd:documentation>Other energy source. Use Description field.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+
+ <!--
+ waterHeaterEfficiencyMetricEnum
+ Aligned with ASHRAE 229P ServiceWaterHeaterEfficiencyMetricOptions.
+ References ASHRAE 90.1-2019 Table 7.8 metric types by equipment category.
+ -->
+ <xsd:simpleType name="waterHeaterEfficiencyMetricEnum">
+ <xsd:annotation>
+ <xsd:documentation>
+ Specifies which efficiency metric value is provided for water heating equipment.
+ Different equipment types and capacity ranges use different metrics per
+ ASHRAE 90.1-2019 Table 7.8. Aligned with ASHRAE 229P
+ ServiceWaterHeaterEfficiencyMetricOptions.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="ThermalEfficiency">
+ <xsd:annotation><xsd:documentation>
+ Thermal efficiency (Et). Steady-state burner-to-water efficiency.
+ Required by ASHRAE 90.1-2019 Table 7.8 for commercial storage and
+ instantaneous water heaters above the consumer-duty threshold.
+ Also applies to hot water supply boilers. Dimensionless (0 to 1).
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="UniformEnergyFactor">
+ <xsd:annotation><xsd:documentation>
+ Uniform Energy Factor (UEF) per DOE 10 CFR Part 430 test procedure
+ (ANSI/RESNET/ICC 301). Current DOE metric for residential and light
+ commercial water heaters including HPWH. Replaces legacy Energy Factor (EF).
+ Higher values indicate greater efficiency.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="EnergyFactor">
+ <xsd:annotation><xsd:documentation>
+ Legacy Energy Factor (EF). DOE metric superseded by UEF in 2017.
+ Retained for legacy equipment databases and older design tools.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="CoefficientOfPerformance">
+ <xsd:annotation><xsd:documentation>
+ Coefficient of Performance (COP) at defined test conditions.
+ Used for heat pump water heaters when manufacturer publishes COP
+ rather than UEF, or for simulation-grade modeling with performance curves.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="AnnualFuelUtilizationEfficiency">
+ <xsd:annotation><xsd:documentation>
+ Annual Fuel Utilization Efficiency (AFUE). Seasonal efficiency metric
+ used for gas boilers serving service water heating (combination boilers,
+ hot water supply boilers). Accounts for cycling losses and standby losses.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="StandbyLossFraction">
+ <xsd:annotation><xsd:documentation>
+ Standby loss expressed as a fraction of stored energy per hour.
+ ASHRAE 90.1-2019 Table 7.8 uses this metric for large commercial
+ storage water heaters above the threshold where Et is inapplicable.
+ Dimensionless hourly fraction.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+
+ <!--
+ serviceWaterHeatingSpaceTypeEnum
+ Directly aligned with ASHRAE 229P ServiceWaterHeatingSpaceOptions2019ASHRAE901.
+ Corresponds to building-type categories in ASHRAE 90.1-2019 Table 7.8.
+ Used as a compliance parameter for RCT baseline SWH load assignment.
+ -->
+ <xsd:simpleType name="serviceWaterHeatingSpaceTypeEnum">
+ <xsd:annotation>
+ <xsd:documentation>
+ Space-use classification for service water heating load determination.
+ DIRECTLY ALIGNED with ASHRAE Standard 229P enumeration
+ ServiceWaterHeatingSpaceOptions2019ASHRAE901 (develop branch).
+ Corresponds to building/space categories in ASHRAE 90.1-2019 Table 7.8.
+
+ This is a COMPLIANCE PARAMETER used by Ruleset Checking Tools (RCT) to:
+ 1. Determine baseline service water heating loads per Table 7.8
+ 2. Assign baseline water heater type per Appendix G Section G3.1.11
+ 3. Apply mandatory efficiency requirements per Table 7.8
+
+ Set on the ServiceWaterZone element and/or directly on the Space element.
+ mapping: Space object Tag 2 field (service_water_heating_space_type).
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="AutomotiveFacility"/>
+ <xsd:enumeration value="ConventionCenter"/>
+ <xsd:enumeration value="Courthouse"/>
+ <xsd:enumeration value="DiningBarLoungeLeisure"/>
+ <xsd:enumeration value="DiningCafeteriaFastFood"/>
+ <xsd:enumeration value="DiningFamily"/>
+ <xsd:enumeration value="Dormitory"/>
+ <xsd:enumeration value="ExerciseCenter"/>
+ <xsd:enumeration value="FireStation"/>
+ <xsd:enumeration value="FoodService"/>
+ <xsd:enumeration value="Gymnasium"/>
+ <xsd:enumeration value="HealthCareClinic"/>
+ <xsd:enumeration value="HospitalAndOutpatientSurgeryCenter"/>
+ <xsd:enumeration value="Hotel"/>
+ <xsd:enumeration value="Library"/>
+ <xsd:enumeration value="ManufacturingFacility"/>
+ <xsd:enumeration value="Motel"/>
+ <xsd:enumeration value="MotionPictureTheater"/>
+ <xsd:enumeration value="Multifamily"/>
+ <xsd:enumeration value="Museum"/>
+ <xsd:enumeration value="Office"/>
+ <xsd:enumeration value="ParkingGarage"/>
+ <xsd:enumeration value="Penitentiary"/>
+ <xsd:enumeration value="PerformingArtsTheater"/>
+ <xsd:enumeration value="PoliceStation"/>
+ <xsd:enumeration value="PostOffice"/>
+ <xsd:enumeration value="ReligiousFacility"/>
+ <xsd:enumeration value="Retail"/>
+ <xsd:enumeration value="SchoolUniversity"/>
+ <xsd:enumeration value="SportsArena"/>
+ <xsd:enumeration value="TownHall"/>
+ <xsd:enumeration value="Transportation"/>
+ <xsd:enumeration value="Warehouse"/>
+ <xsd:enumeration value="Workshop"/>
+ <xsd:enumeration value="None">
+ <xsd:annotation><xsd:documentation>Space has no service water heating load.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Other">
+ <xsd:annotation><xsd:documentation>
+ Space type not covered by the ASHRAE 90.1-2019 Table 7.8 categories.
+ Use the Description or Notes element to provide additional detail.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+
+ <!--
+ serviceWaterLoadTypeEnum
+ Hot water end-use classification. Demand-side categorization.
+ -->
+ <xsd:simpleType name="serviceWaterLoadTypeEnum">
+ <xsd:annotation>
+ <xsd:documentation>
+ Classification of service HOT water end use at the space or fixture level.
+ Used to distinguish domestic DHW from process, laundry, food service, and
+ pool/spa loads, which may have different temperature requirements,
+ schedules, and drain heat recovery characteristics.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="Domestic">
+ <xsd:annotation><xsd:documentation>General domestic hot water: lavatory faucets, showers, bathtubs, kitchen sinks, residential dishwashers.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Process">
+ <xsd:annotation><xsd:documentation>Hot process water for industrial, laboratory, or manufacturing operations.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Laundry">
+ <xsd:annotation><xsd:documentation>Hot water for commercial or institutional laundry equipment.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="FoodService">
+ <xsd:annotation><xsd:documentation>Hot water for food preparation, commercial dishwashing, pot-fill, or kitchen equipment. Typically requires higher delivery temperatures (140–180°F).</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="PoolSpa">
+ <xsd:annotation><xsd:documentation>Hot water for pool or spa/hot tub heating. Typically served by a dedicated heater or heat exchanger loop.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="SpaceHeating">
+ <xsd:annotation><xsd:documentation>Combined service water and space heating system (combi-boiler or combi-heat-pump). Water heater also serves hydronic space heating.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Other">
+ <xsd:annotation><xsd:documentation>Hot water end use not classified above. Use Description field.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+
+ <!--
+ coldWaterLoadTypeEnum
+ Cold/ambient-temperature water demand — NOT heated water.
+ No direct ASHRAE 229P analog (229P is energy-focused and only covers heated water).
+ Supports whole-building water balance, LEED WE credits, and utility cost modeling.
+ -->
+ <xsd:simpleType name="coldWaterLoadTypeEnum">
+ <xsd:annotation>
+ <xsd:documentation>
+ Classification of cold (ambient-temperature) water consumption: uses that
+ require no heating. Used in the ColdWaterLoad element on Space and Building.
+ This enumeration has no direct ASHRAE 229P analog — ASHRAE 229P focuses on
+ heated water and energy use only. This extension enables whole-building
+ potable water budgeting, LEED WE and WELL Water credit calculations, and
+ utility water cost modeling.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="Irrigation">
+ <xsd:annotation><xsd:documentation>
+ Landscape, turf, or green roof irrigation. May be served by potable water,
+ reclaimed water, or rainwater harvesting. Use IrrigatedArea and
+ IrrigationIntensity fields for water budget calculations.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="ToiletFlushing">
+ <xsd:annotation><xsd:documentation>
+ Water closet (toilet) flushing. Use FlushVolumePerUse and UsesPerPersonPerDay.
+ May be served by reclaimed water (greywater, rainwater) — set IsReclaimedWater.
+ LEED WE Prerequisite 1 baseline: 1.6 gpf (full flush), 1.28 gpf (high-efficiency).
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="UrinalFlushing">
+ <xsd:annotation><xsd:documentation>
+ Urinal flushing. Use FlushVolumePerUse and UsesPerPersonPerDay.
+ LEED WE baseline: 1.0 gpf; waterless urinals: 0 gpf.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="CoolingTowerMakeup">
+ <xsd:annotation><xsd:documentation>
+ Makeup water for evaporative cooling towers: evaporation, blowdown, and drift.
+ Use CoolingTowerCycles (cycles of concentration) for blowdown calculation.
+ Typically the largest process water consumer in commercial buildings.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="BoilerMakeup">
+ <xsd:annotation><xsd:documentation>
+ Makeup water for steam or high-temperature hot water boilers due to
+ blowdown and system losses.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="ProcessCold">
+ <xsd:annotation><xsd:documentation>
+ Cold process water for industrial processes, laboratory equipment, medical
+ equipment, or data center cooling (non-evaporative liquid cooling circuits).
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="LaundryRinse">
+ <xsd:annotation><xsd:documentation>
+ Cold rinse water for commercial or institutional laundry operations.
+ Distinct from hot LaundryWash water modeled as ServiceWaterLoad.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Dishwashing">
+ <xsd:annotation><xsd:documentation>
+ Cold pre-rinse or pot-filler water for food service operations.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="PoolSpaFillMakeup">
+ <xsd:annotation><xsd:documentation>
+ Initial fill and ongoing makeup water for pools, spas, fountains, or
+ water features. Covers cold-water component only; pool heating is
+ modeled as ServiceWaterLoad with type PoolSpa.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="FireSuppression">
+ <xsd:annotation><xsd:documentation>
+ Water storage or supply for fire suppression systems (sprinklers, standpipes).
+ Typically not consumed daily but relevant to storage tank sizing and
+ water utility capacity requirements.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="VehicleWash">
+ <xsd:annotation><xsd:documentation>
+ Water for vehicle washing operations: car washes, fleet washing, aircraft
+ washing. Use WaterUseValue with DailyVolume or VolumeFlowRate units.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Other">
+ <xsd:annotation><xsd:documentation>Cold water use not classified above. Use Description field.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+
+ <!--
+ recirculationControlTypeEnum
+ Aligned with ASHRAE 229P ServiceWaterHeatingRecirculationControlOptions.
+ Per ASHRAE 90.1-2019 Section 7.4.4.3 (recirculation pump controls).
+ -->
+ <xsd:simpleType name="recirculationControlTypeEnum">
+ <xsd:annotation>
+ <xsd:documentation>
+ Control strategy for the domestic hot water recirculation pump.
+ Aligned with ASHRAE Standard 229P
+ ServiceWaterHeatingRecirculationControlOptions enumeration.
+ ASHRAE 90.1-2019 Section 7.4.4.3 mandates time-clock or demand controls
+ for all new recirculation systems — Continuous is non-compliant for new systems.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="None">
+ <xsd:annotation><xsd:documentation>No recirculation loop or pump present.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Continuous">
+ <xsd:annotation><xsd:documentation>
+ Continuously running pump with no control. Minimum pipe heat loss but
+ high pump energy. Not compliant with ASHRAE 90.1-2019 Section 7.4.4.3 for
+ new systems. Retained for existing system modeling.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Timer">
+ <xsd:annotation><xsd:documentation>
+ Time-clock controlled recirculation. Pump runs on a scheduled time schedule.
+ Compliant with ASHRAE 90.1-2019 Section 7.4.4.3. Use RecirculationScheduleIdRef
+ to reference the operating schedule.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="DemandControlled">
+ <xsd:annotation><xsd:documentation>
+ Demand-controlled recirculation, activated by an occupancy sensor, push-button,
+ motion sensor, or smart thermostat signal. Most energy-efficient control type.
+ Compliant with ASHRAE 90.1-2019 Section 7.4.4.3.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="TemperatureMaintenance">
+ <xsd:annotation><xsd:documentation>
+ Temperature-activated recirculation: pump activates when the return line
+ temperature drops below a setpoint. Balances pipe heat loss against pump energy.
+ Compliant with ASHRAE 90.1-2019 Section 7.4.4.3.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Other">
+ <xsd:annotation><xsd:documentation>Other control strategy. Use Description field.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+
+ <!--
+ drainHeatRecoveryTypeEnum
+ Aligned with ASHRAE 229P DrainHeatRecoveryTypeOptions.
+ -->
+ <xsd:simpleType name="drainHeatRecoveryTypeEnum">
+ <xsd:annotation>
+ <xsd:documentation>
+ Type of drain waste heat recovery (DWHR) device. Recovers heat from
+ waste hot water (typically shower/laundry drains) to preheat cold makeup water.
+ Aligned with ASHRAE Standard 229P DrainHeatRecoveryTypeOptions.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="None"/>
+ <xsd:enumeration value="Vertical">
+ <xsd:annotation><xsd:documentation>
+ Vertical drain pipe heat exchanger. Gravity-film flow type. Most common
+ residential DWHR configuration. Effectiveness typically 40-60%.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Horizontal">
+ <xsd:annotation><xsd:documentation>
+ Horizontal drain pipe heat exchanger. Used where vertical installation is
+ not feasible. Lower effectiveness than vertical due to reduced film flow.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Other"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+
+ <!--
+ solarThermalCollectorTypeEnum
+ Aligned with ASHRAE 229P SolarThermalCollectorTypeOptions.
+ SRCC OG-100 collector categories are reflected.
+ -->
+ <xsd:simpleType name="solarThermalCollectorTypeEnum">
+ <xsd:annotation>
+ <xsd:documentation>
+ Classification of solar thermal collector technology.
+ Aligned with ASHRAE Standard 229P SolarThermalCollectorTypeOptions.
+ SRCC OG-100 rating parameters (FRTA optical efficiency, FRUL heat loss
+ coefficient) apply to FlatPlate and EvacuatedTube types.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="FlatPlate">
+ <xsd:annotation><xsd:documentation>Flat-plate glazed or unglazed collector. Stationary. Suitable for low-to-medium temperature DHW applications (100–180°F). SRCC OG-100 rated.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="EvacuatedTube">
+ <xsd:annotation><xsd:documentation>Evacuated-tube collector (glass-glass or heat-pipe). Higher efficiency than flat-plate at elevated temperatures. SRCC OG-100 rated.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Concentrating">
+ <xsd:annotation><xsd:documentation>Concentrating parabolic trough or linear Fresnel collector. Requires tracking; used for high-temperature process water applications.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="IntegralCollectorStorage">
+ <xsd:annotation><xsd:documentation>Integral collector-storage (ICS or batch) solar water heater. Combined collector and storage in one unit. Simple but limited to mild climates.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Other"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+
+ <!--
+ pipingLocationTypeEnum
+ Aligned with ASHRAE 229P PipingLocationOptions.
+ -->
+ <xsd:simpleType name="pipingLocationTypeEnum">
+ <xsd:annotation>
+ <xsd:documentation>
+ Location of service water piping for ambient temperature boundary condition
+ in pipe heat loss calculations. Aligned with ASHRAE 229P PipingLocationOptions.
+ Determines applicable minimum insulation per ASHRAE 90.1-2019 Table 6.8.3.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="ConditionedSpace">
+ <xsd:annotation><xsd:documentation>Within conditioned (heated/cooled) space. Pipe heat loss contributes to space heating credit.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="UnconditionedSpace">
+ <xsd:annotation><xsd:documentation>In unconditioned space: attic, crawlspace, unheated mechanical room, parking structure.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Exterior">
+ <xsd:annotation><xsd:documentation>Exposed to outdoor ambient conditions. Maximum insulation requirements apply.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Underground">
+ <xsd:annotation><xsd:documentation>Below-grade underground piping. Ambient is ground temperature (varies seasonally).</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Other"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+
+ <!--
+ tankTypeEnum
+ Aligned with ASHRAE 229P TankTypeOptions.
+ Maps to simulation engine water heater object vs. WaterHeater:Stratified.
+ -->
+ <xsd:simpleType name="tankTypeEnum">
+ <xsd:annotation>
+ <xsd:documentation>
+ Classification of hot water storage tank type.
+ Aligned with ASHRAE Standard 229P TankTypeOptions.
+ Determines simulation model fidelity: well-mixed vs. stratified.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="Storage">
+ <xsd:annotation><xsd:documentation>
+ Fully-mixed (well-mixed) storage tank. Single uniform temperature node.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Stratified">
+ <xsd:annotation><xsd:documentation>
+ Thermally stratified storage tank. Multiple temperature nodes from bottom
+ to top. More accurate for solar thermal and HPWH preheat scenarios.
+ </xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Other"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+
+ <!--
+ waterUseUnitsEnum
+ Aligned with ASHRAE 229P ServiceWaterHeatingUseUnitsOptions.
+ Extended with per-person and per-area intensity metrics for design use.
+ -->
+ <xsd:simpleType name="waterUseUnitsEnum">
+ <xsd:annotation>
+ <xsd:documentation>
+ Units for specifying service water use rates or quantities.
+ Aligned with ASHRAE Standard 229P ServiceWaterHeatingUseUnitsOptions,
+ extended with intensity-based metrics common in design workflows.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="Power">
+ <xsd:annotation><xsd:documentation>Use specified as a power value (Watts or Btu/h). Useful for steady-state loads.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="VolumeFlowRate">
+ <xsd:annotation><xsd:documentation>Peak volume flow rate (GPM or L/s). Used with a fractional multiplier schedule.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="DailyVolume">
+ <xsd:annotation><xsd:documentation>Total daily volume (gallons/day or liters/day).</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="VolumePerPersonPerDay">
+ <xsd:annotation><xsd:documentation>Volume per occupant per day (gal/person/day or L/person/day). Multiplied by Space PeopleNumber to get total.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="VolumePerFloorAreaPerDay">
+ <xsd:annotation><xsd:documentation>Volume per unit floor area per day (gal/ft²/day or L/m²/day). Multiplied by Space Area to get total.</xsd:documentation></xsd:annotation>
+ </xsd:enumeration>
+ <xsd:enumeration value="Other"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+
+ <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ PART 2 — ELEMENT DEFINITIONS
+
+ Hierarchy:
+ gbXML (root)
+ ├── ServiceWaterSystem [new top-level]
+ │ ├── ServiceWaterHeatingPlant
+ │ │ ├── WaterHeater (1+)
+ │ │ │ ├── StorageTank (optional)
+ │ │ │ ├── SolarThermalCollector (optional)
+ │ │ │ ├── DesuperheaterHeatRecovery (optional)
+ │ │ │ ├── ServiceWaterHeaterValidationPoints
+ │ │ │ ├── HPWHCapacityValidationPoints
+ │ │ │ └── HPWHPowerValidationPoints
+ │ │ ├── StorageTanks (standalone tanks)
+ │ │ ├── SolarThermalCollectors (standalone)
+ │ │ └── DesuperheaterHeatRecoveries
+ │ └── ServiceWaterDistribution
+ │ └── ServiceWaterPipings
+ │ └── ServiceWaterPiping (recursive)
+ └── ServiceWaterZone [new top-level]
+
+ Space (existing, add children)
+ ├── ServiceWaterLoad [new child — hot water demand]
+ ├── ColdWaterLoad [new child — ambient/cold water demand]
+ └── ServiceWaterZoneId [new child — reference]
+
+ Building (existing, add children)
+ └── ColdWaterLoad [new child — building-level cold water]
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+
+
+ <!-- ── ServiceWaterHeaterValidationPoint ─────────────────────── -->
+ <xsd:element name="ServiceWaterHeaterValidationPoint">
+ <xsd:annotation>
+ <xsd:documentation>
+ A single performance validation data point for a conventional (non-HPWH) water
+ heater, characterizing input power and heating capacity at a specific operating
+ condition. Multiple points characterize part-load or off-rated performance.
+ Aligned with ASHRAE Standard 229P ServiceWaterHeaterValidationPoint data group.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="InletWaterTemperature" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Inlet (cold supply) water temperature at this test condition.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="OutletWaterTemperature" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Outlet (hot supply) water temperature at this test condition.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="InputPower" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Fuel or electrical input power at this operating condition (Btu/h or Watts).</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="powerUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="HeatingCapacity" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Useful heating output capacity at this condition (Btu/h or Watts).</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="powerUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ </xsd:all>
+ </xsd:complexType>
+ </xsd:element>
+
+
+ <!-- ── HPWHCapacityValidationPoint ───────────────────────────── -->
+ <xsd:element name="HPWHCapacityValidationPoint">
+ <xsd:annotation>
+ <xsd:documentation>
+ Heating capacity validation data point for a heat pump water heater at a
+ specific combination of air-side and water-side conditions.
+ Multiple points define a 2D or 3D capacity performance map for simulation.
+ Combined with HPWHPowerValidationPoint, these derive the COP map.
+ Aligned with ASHRAE 229P HeatPumpWaterHeaterCapacityValidationPoint.
+ Corresponds to simulation engine water heater object performance curve input data.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="AmbientDryBulbTemperature" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Ambient air dry-bulb temperature at the compressor inlet.
+ Per ASHRAE 229P outdoor_drybulb_temperature.
+ Note: for indoor-installed HPWH this is the zone dry-bulb temperature.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="AmbientWetBulbTemperature" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Ambient air wet-bulb temperature at the compressor inlet.
+ Per ASHRAE 229P outdoor_wetbulb_temperature.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="InletWaterTemperature" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Tank water inlet temperature at this test point. Per ASHRAE 229P inlet_water_temperature.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="HeatingCapacity" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Heat pump heating capacity at this operating condition (Btu/h or Watts). Per ASHRAE 229P capacity.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="powerUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ </xsd:all>
+ </xsd:complexType>
+ </xsd:element>
+
+
+ <!-- ── HPWHPowerValidationPoint ──────────────────────────────── -->
+ <xsd:element name="HPWHPowerValidationPoint">
+ <xsd:annotation>
+ <xsd:documentation>
+ Compressor input power validation data point for a heat pump water heater.
+ Paired with HPWHCapacityValidationPoint to derive COP at each condition.
+ Aligned with ASHRAE 229P HeatPumpWaterHeaterPowerValidationPoint.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="AmbientDryBulbTemperature" minOccurs="0">
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="AmbientWetBulbTemperature" minOccurs="0">
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="InletWaterTemperature" minOccurs="0">
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="InputPower" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Compressor electrical input power at this condition (Watts or Btu/h). Divide HeatingCapacity by InputPower to get COP.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="powerUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ </xsd:all>
+ </xsd:complexType>
+ </xsd:element>
+
+
+ <!-- ── StorageTank ───────────────────────────────────────────── -->
+
+ <!-- ── Draw-event flow units ─────────────────────────────────────── -->
+ <xsd:simpleType name="drawFlowUnitEnum">
+ <xsd:annotation><xsd:documentation>Instantaneous draw flow rate units for discrete draw events.</xsd:documentation></xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="GallonsPerMinute"/>
+ <xsd:enumeration value="LitersPerMinute"/>
+ <xsd:enumeration value="LitersPerSecond"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+ <!-- ── Fixture-level draw end use ────────────────────────────────── -->
+ <xsd:simpleType name="serviceWaterDrawEndUseEnum">
+ <xsd:annotation><xsd:documentation>Fixture-level hot water end use for discrete draw events. Distinct from serviceWaterLoadTypeEnum (space-level).</xsd:documentation></xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="Shower"/>
+ <xsd:enumeration value="Bath"/>
+ <xsd:enumeration value="Faucet"/>
+ <xsd:enumeration value="ClothesWasher"/>
+ <xsd:enumeration value="DishWasher"/>
+ <xsd:enumeration value="Other"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+ <!-- ── Piping segment role ───────────────────────────────────────── -->
+ <xsd:simpleType name="pipingSegmentRoleEnum">
+ <xsd:annotation><xsd:documentation>Role of a pipe segment in the distribution/recirculation network. Distinguishes mains (standby-loss-driven) from branches (per-draw-waste-driven).</xsd:documentation></xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="SupplyMain"/>
+ <xsd:enumeration value="ReturnMain"/>
+ <xsd:enumeration value="Branch"/>
+ <xsd:enumeration value="Twig"/>
+ <xsd:enumeration value="NonRecirculated"/>
+ <xsd:enumeration value="Other"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+ <!-- ── Simplified distribution system type ───────────────────────── -->
+ <xsd:simpleType name="simplifiedDistributionTypeEnum">
+ <xsd:annotation><xsd:documentation>Simplified distribution system classification. Alternative to full piping geometry for residential and small-commercial models.</xsd:documentation></xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="Standard"/>
+ <xsd:enumeration value="Recirculating"/>
+ <xsd:enumeration value="PointOfUse"/>
+ <xsd:enumeration value="CompactLayout"/>
+ <xsd:enumeration value="DemandControlled"/>
+ <xsd:enumeration value="Other"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+ <!-- ── Storage tank role ─────────────────────────────────────────── -->
+ <xsd:simpleType name="tankRoleEnum">
+ <xsd:annotation><xsd:documentation>Role of a storage tank within a multi-tank plant configuration. Enables modeling of primary, swing (buffer/tempering), and preheat tank staging.</xsd:documentation></xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="Primary"/>
+ <xsd:enumeration value="Swing"/>
+ <xsd:enumeration value="Preheat"/>
+ <xsd:enumeration value="Buffer"/>
+ <xsd:enumeration value="Other"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+ <!-- ── HPWH source air configuration ─────────────────────────────── -->
+ <xsd:simpleType name="hpwhSourceAirConfigEnum">
+ <xsd:annotation><xsd:documentation>Heat pump water heater evaporator air source configuration. Determines air conditions available to the compressor for heat extraction.</xsd:documentation></xsd:annotation>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="ZoneAir"/>
+ <xsd:enumeration value="OutdoorAir"/>
+ <xsd:enumeration value="DuctedMixed"/>
+ <xsd:enumeration value="ExhaustAir"/>
+ <xsd:enumeration value="Other"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+
+
+ <xsd:element name="StorageTank">
+ <xsd:annotation>
+ <xsd:documentation>
+ Describes a hot water storage tank: either integral to a water heater or
+ a standalone vessel (solar preheat tank, desuperheater buffer tank, indirect tank).
+ Aligned with ASHRAE Standard 229P Tank data group.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="Name" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="Description" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="TankType" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Well-mixed or stratified tank model type. Aligned with ASHRAE 229P TankTypeOptions.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="tankTypeEnum"/>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="StorageVolume" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Tank storage volume (gallons or liters). Aligned with ASHRAE 229P storage_capacity.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="volumeUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="InsulationRValue" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Effective R-value of the tank insulation jacket (h·ft²·°F/Btu or m²·K/W).
+ Per ASHRAE 229P insulation_r_value. Used to compute standby losses.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="rValueUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="StandbyLossCoefficient" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Tank UA (heat loss coefficient × area) representing standby losses (Btu/h·°F or W/K).
+ Per ASHRAE 229P standby_loss_coefficient.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="efficiencyUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="TankLocation" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Physical location of the tank for standby loss ambient temperature.
+ Aligned with ASHRAE 229P location (tank location).
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="pipingLocationTypeEnum"/>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="TankZoneIdRef" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Reference to the Zone in which the tank is physically located. Used to determine ambient temperature for standby losses.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="zoneIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="NumberOfNodes" type="xsd:positiveInteger" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Number of stratification nodes for stratified tank models. Only applicable when TankType = Stratified. default: 12 nodes.</xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="HeightToDiameterRatio" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Tank height-to-diameter ratio (H/D) for stratification model. Standard vertical cylindrical tanks typically H/D = 2–4.</xsd:documentation></xsd:annotation>
+ </xsd:element>
+ </xsd:all>
+ <xsd:attribute name="id" type="xsd:ID" use="required"/>
+ <xsd:attribute name="programIdRef" type="xsd:IDREF" use="optional"/>
+ </xsd:complexType>
+ </xsd:element>
+
+
+ <!-- ── SolarThermalCollector ─────────────────────────────────── -->
+ <xsd:element name="SolarThermalCollector">
+ <xsd:annotation>
+ <xsd:documentation>
+ Describes a solar thermal water heating system or collector array.
+ Can be: (a) a child of WaterHeater for solar-assisted configurations,
+ or (b) a standalone element within ServiceWaterHeatingPlant.
+ SRCC OG-100 Hottel-Whillier-Bliss parameters (FRTA, FRUL) are included
+ for simulation-grade modeling. Aligned with ASHRAE 229P SolarThermal data group.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="Name" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="Description" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="CollectorType" minOccurs="0">
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="solarThermalCollectorTypeEnum"/>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="CollectorArea" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Total gross collector aperture area (ft² or m²). Per ASHRAE 229P collector_area.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="areaUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="CollectorTilt" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Collector tilt angle from horizontal (degrees). 0 = horizontal, 90 = vertical. Per ASHRAE 229P collector_tilt.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" fixed="Degrees" use="optional" type="xsd:string"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="CollectorAzimuth" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Collector azimuth from North, clockwise (degrees). 180 = south-facing. Per ASHRAE 229P collector_azimuth.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" fixed="Degrees" use="optional" type="xsd:string"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="FRTA" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Collector heat removal factor × optical efficiency (FR·τα). SRCC OG-100
+ y-intercept of the efficiency curve (dimensionless). Hottel-Whillier-Bliss model.
+ </xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="FRUL" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Collector heat removal factor × overall heat loss coefficient (FR·UL).
+ SRCC OG-100 slope of the efficiency curve (Btu/h·ft²·°F or W/m²·K).
+ Used in Hottel-Whillier-Bliss instantaneous efficiency model.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" use="optional">
+ <xsd:simpleType>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="BtuPerHourPerSquareFootPerF"/>
+ <xsd:enumeration value="WattsPerSquareMeterPerK"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+ </xsd:attribute>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="SolarEnergyFraction" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Annual solar fraction: fraction of total SWH load met by solar energy (0–1).
+ May be specified directly from F-Chart or TRNSYS analysis rather than
+ computing from simulation. Per ASHRAE 229P solar_energy_fraction.
+ </xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="LinkedStorageTankIdRef" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Reference to the StorageTank element (preheat or main tank) associated with this collector array.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="tankIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ </xsd:all>
+ <xsd:attribute name="id" type="xsd:ID" use="required"/>
+ <xsd:attribute name="programIdRef" type="xsd:IDREF" use="optional"/>
+ </xsd:complexType>
+ </xsd:element>
+
+
+ <!-- ── DesuperheaterHeatRecovery ─────────────────────────────── -->
+ <xsd:element name="DesuperheaterHeatRecovery">
+ <xsd:annotation>
+ <xsd:documentation>
+ Describes a desuperheater that recovers waste heat from an HVAC or refrigeration
+ compressor cycle to preheat service hot water. Links a source equipment element
+ (AirLoopEquipment, ZoneHVACEquipment, or HydronicLoopEquipment) to a destination
+ StorageTank element. No direct ASHRAE 229P analog — extends Option C concept.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="Name" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="Description" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="DesuperheaterEfficiency" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Fraction of available desuperheat energy recovered (0–1).
+ </xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="MaxHeatRecoveryCapacity" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Maximum heat recovery rate (Watts or Btu/h). Limits recovery when tank is near setpoint.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="powerUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="LinkedHVACEquipmentId" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Reference to the HVAC equipment providing the desuperheat waste heat.
+ Specify the applicable IdRef attribute for the source equipment type.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="airLoopEquipIdRef" type="xsd:IDREF" use="optional"/>
+ <xsd:attribute name="zoneHVACEquipIdRef" type="xsd:IDREF" use="optional"/>
+ <xsd:attribute name="hydronicLoopEquipIdRef" type="xsd:IDREF" use="optional"/>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="LinkedStorageTankIdRef" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Reference to the StorageTank element heated by this desuperheater.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="tankIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="SetpointTemperature" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Maximum tank water temperature at which the desuperheater is allowed to operate. Recovery stops above this setpoint.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="OperationScheduleIdRef" minOccurs="0">
+ <xsd:complexType>
+ <xsd:attribute name="scheduleIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ </xsd:all>
+ <xsd:attribute name="id" type="xsd:ID" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+
+
+ <!-- ── WaterHeater (primary plant equipment element) ─────────── -->
+ <xsd:element name="WaterHeater">
+ <xsd:annotation>
+ <xsd:documentation>
+ Primary service water heating equipment element. Represents a single water
+ heating unit: storage, instantaneous, heat pump, indirect, solar, desuperheater,
+ or hot water supply boiler.
+ Aligned with ASHRAE Standard 229P ServiceWaterHeatingEquipment data group.
+ Efficiency parameters correspond to ASHRAE 90.1-2019 Table 7.8.
+ mapping:
+ Storage/Instantaneous → WaterHeater:Mixed or WaterHeater:Stratified
+ HeatPump → WaterHeater:HeatPump:WrappedCondenser or PumpedCondenser
+ HotWaterSupplyBoiler → Boiler:HotWater (dedicated DHW boiler)
+ Indirect → WaterHeater:Mixed with source loop connection
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="Name" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="Description" type="xsd:string" minOccurs="0"/>
+
+ <!-- ── Equipment classification ── -->
+ <xsd:element name="WaterHeaterType" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Equipment type. Aligned with ASHRAE 229P ServiceWaterHeatingEquipmentOptions and 90.1-2019 Table 7.8.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="waterHeaterTypeEnum"/>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="FuelSource" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Fuel or energy source. Aligned with ASHRAE 229P EnergySourceOptions (heater_fuel_type).</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="waterHeaterFuelTypeEnum"/>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="EfficiencyMetricType" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Specifies which efficiency value is provided (ThermalEfficiency, UniformEnergyFactor, etc.).
+ Aligned with ASHRAE 229P ServiceWaterHeaterEfficiencyMetricOptions (efficiency_metric).
+ Determines which efficiency element below is the primary compliance metric.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="waterHeaterEfficiencyMetricEnum"/>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+
+ <!-- ── Capacity ── -->
+ <xsd:element name="InputCapacity" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Rated fuel or electrical input capacity (Btu/h or Watts).
+ ASHRAE 90.1-2019 Table 7.8 uses input capacity to determine applicable
+ equipment category and efficiency metric.
+ Per ASHRAE 229P input_power.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="powerUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="RatedCapacity" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Rated heating output capacity (Btu/h or Watts).
+ For HPWH: heat pump output at rated conditions.
+ Per ASHRAE 229P rated_capacity.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="powerUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="FirstHourRating" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ First-hour rating per DOE test procedure (gallons or liters per hour).
+ Total hot water deliverable in the first hour starting with a full tank.
+ Used for ASHRAE 90.1 Appendix G sizing determination (G3.1.11).
+ Per ASHRAE 229P first_hour_rating.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="flowUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+
+ <!-- ── Efficiency parameters (ASHRAE 90.1-2019 Table 7.8) ── -->
+ <xsd:element name="ThermalEfficiency" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Thermal efficiency (Et). Dimensionless (0–1). Required by ASHRAE 90.1-2019
+ Table 7.8 for commercial storage and instantaneous water heaters and hot water
+ supply boilers. Per ASHRAE 229P thermal_efficiency.
+ </xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="UniformEnergyFactor" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Uniform Energy Factor (UEF). Current DOE metric for residential and light
+ commercial water heaters. Replaces legacy EF. Per ASHRAE 229P uniform_energy_factor.
+ </xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="EnergyFactor" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Legacy Energy Factor (EF). Retained for equipment rated prior to UEF adoption. Per ASHRAE 229P.</xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="RecoveryEfficiency" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Recovery efficiency. Ratio of energy transferred to water vs. burner/element input during active heating. Dimensionless (0–1). Per ASHRAE 229P recovery_efficiency.</xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="StandbyLossFraction" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Hourly standby heat loss fraction. ASHRAE 90.1-2019 Table 7.8 expresses
+ standby requirements as a maximum fraction (%/h) for large commercial storage.
+ Per ASHRAE 229P standby_loss_fraction.
+ </xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="StandbyLossCoefficient" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Tank UA (Btu/h·°F or W/K). Off-Cycle/On-Cycle Loss Coefficient to
+ Ambient Temperature. Preferred over StandbyLossFraction for simulation models.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="efficiencyUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+
+ <!-- ── Temperature setpoints ── -->
+ <xsd:element name="SetpointTemperature" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Hot water setpoint temperature (°F or °C). Storage tank target temperature.
+ Per ASHRAE 229P hot_water_supply_temperature.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="SetpointTemperatureScheduleIdRef" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Reference to Schedule defining time-varying setpoint temperatures. Use scheduleType = WaterHeaterSetpoint.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="scheduleIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="CutInTemperatureDelta" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Deadband temperature delta below setpoint that triggers heater activation (°F or °C). Typical value: 10–20°F (5.5–11°C).
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+
+ <!-- ── HPWH-specific ── -->
+ <xsd:element name="CompressorZoneIdRef" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Zone where the HPWH compressor is located. Provides air-side heat source.
+ Required when WaterHeaterType = HeatPump or CentralHeatPumpWaterHeater.
+ Per ASHRAE 229P compressor_location.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="zoneIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="BackupHeaterFuelSource" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Fuel type of the HPWH backup/auxiliary resistance element (typically Electricity).</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="waterHeaterFuelTypeEnum"/>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="BackupInputCapacity" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Rated input capacity of the HPWH backup resistance element (Btu/h or Watts).</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="powerUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="BackupSetpointTemperature" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Temperature setpoint triggering backup/auxiliary heater activation in a HPWH system.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+
+ <!-- ── Indirect heater source loop link ── -->
+ <xsd:element name="SourceHydronicLoopIdRef" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ For WaterHeaterType = Indirect: reference to the HydronicLoop (typically a
+ heating hot water loop) that provides heat via an internal coil heat exchanger.
+ The indirect tank extracts heat from this loop.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="hydronicLoopIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+
+ <!-- ── Operation ── -->
+ <xsd:element name="OperationScheduleIdRef" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Availability schedule (on/off). Use scheduleType = WaterHeaterOperation.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="scheduleIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="StatusType" type="xsd:string" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Equipment status: New, Existing, or Future. Supports renovation and audit workflows.</xsd:documentation></xsd:annotation>
+ </xsd:element>
+
+ <!-- ── Associated hardware ── -->
+ <xsd:element ref="StorageTank" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Integral storage tank. Use for storage water heaters where the tank is part of the heater assembly.</xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element ref="SolarThermalCollector" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Solar thermal collector array associated with this heater. Use when WaterHeaterType = Solar.</xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element ref="DesuperheaterHeatRecovery" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Desuperheater heat recovery coil feeding this water heater's tank.</xsd:documentation></xsd:annotation>
+ </xsd:element>
+
+ <!-- ── Performance validation points (ASHRAE 229P) ── -->
+ <xsd:element name="ServiceWaterHeaterValidationPoints" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Performance validation data points for conventional water heaters.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:sequence>
+ <xsd:element ref="ServiceWaterHeaterValidationPoint" maxOccurs="unbounded"/>
+ </xsd:sequence>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="HPWHCapacityValidationPoints" minOccurs="0">
+ <xsd:annotation><xsd:documentation>HPWH capacity validation data points. Only applicable when WaterHeaterType = HeatPump or CentralHeatPumpWaterHeater.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:sequence>
+ <xsd:element ref="HPWHCapacityValidationPoint" maxOccurs="unbounded"/>
+ </xsd:sequence>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="HPWHPowerValidationPoints" minOccurs="0">
+ <xsd:annotation><xsd:documentation>HPWH input power validation data points. Only applicable when WaterHeaterType = HeatPump or CentralHeatPumpWaterHeater.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:sequence>
+ <xsd:element ref="HPWHPowerValidationPoint" maxOccurs="unbounded"/>
+ </xsd:sequence>
+ </xsd:complexType>
+ </xsd:element>
+
+ <!-- ── Performance curves (existing gbXML pattern reused) ── -->
+ <xsd:element name="Performances" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Performance curve(s) using the existing gbXML Performance/Equation element pattern.
+ Use for HPWH COP or capacity as a function of ambient temperature and/or
+ inlet water temperature. Reuses existing gbXML machinery. The DependentVariable
+ should reference the performance metric (e.g., COP, CapacityRatio) and
+ IndependentVariable elements reference AmbientDryBulb and InletWaterTemp.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:sequence>
+ <xsd:element name="Performance" maxOccurs="unbounded"/>
+ </xsd:sequence>
+ </xsd:complexType>
+ </xsd:element>
+
+ <xsd:element name="CADObjectId" minOccurs="0"/>
+ </xsd:all>
+ <xsd:attribute name="id" type="xsd:ID" use="required"/>
+ <xsd:attribute name="programIdRef" type="xsd:IDREF" use="optional"/>
+ </xsd:complexType>
+ </xsd:element>
+
+
+ <!-- ── ServiceWaterPiping ─────────────────────────────────────── -->
+ <xsd:element name="ServiceWaterPiping">
+ <xsd:annotation>
+ <xsd:documentation>
+ Describes a segment of service water piping in the distribution system.
+ Supports recursive child segments to model branched supply/return networks.
+ Used for pipe heat loss calculation and insulation compliance per
+ ASHRAE 90.1-2019 Table 6.8.3 (minimum pipe insulation thicknesses).
+ Aligned with ASHRAE Standard 229P ServiceWaterPiping data group.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="Name" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="Description" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="NominalDiameter" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Nominal pipe diameter (inches or mm). Per ASHRAE 229P diameter.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" use="optional">
+ <xsd:simpleType>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="Inches"/>
+ <xsd:enumeration value="Millimeters"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+ </xsd:attribute>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="PipeLength" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Length of this pipe segment (ft or m). Per ASHRAE 229P length.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="lengthUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="InsulationRValue" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Pipe insulation R-value (h·ft²·°F/Btu or m²·K/W).
+ Per ASHRAE 90.1-2019 Table 6.8.3 minimum values by pipe size and fluid temperature.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="rValueUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="InsulationThickness" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Physical insulation thickness (inches or mm). Per ASHRAE 229P insulation_thickness.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" use="optional">
+ <xsd:simpleType>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="Inches"/>
+ <xsd:enumeration value="Millimeters"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+ </xsd:attribute>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="PipingLocation" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Physical location for ambient temperature boundary condition.
+ Per ASHRAE 229P location (piping location).
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="pipingLocationTypeEnum"/>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="IsRecirculationPiping" type="xsd:boolean" minOccurs="0">
+ <xsd:annotation><xsd:documentation>True if this segment is part of the hot water return/recirculation loop. Per ASHRAE 229P is_recirculation_piping.</xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="HasElectricHeatTrace" type="xsd:boolean" minOccurs="0">
+ <xsd:annotation><xsd:documentation>True if electric heat trace is installed on this segment. Per ASHRAE 90.1-2019 Section 7.4.4.</xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="HeatTracePower" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Electric heat trace linear power density (W/ft or W/m).</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" use="optional">
+ <xsd:simpleType>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="WattsPerFoot"/>
+ <xsd:enumeration value="WattsPerMeter"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+ </xsd:attribute>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <!-- Recursive child piping segments for branched networks -->
+ <xsd:element name="ChildPiping" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Child pipe segments branching from this segment. Enables modeling of the full distribution network tree. Per ASHRAE 229P child (recursive ServiceWaterPiping).</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:sequence>
+ <xsd:element ref="ServiceWaterPiping" maxOccurs="unbounded"/>
+ </xsd:sequence>
+ </xsd:complexType>
+ </xsd:element>
+ </xsd:all>
+ <xsd:attribute name="id" type="xsd:ID" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+
+
+ <!-- ── ServiceWaterHeatingPlant ──────────────────────────────── -->
+ <xsd:element name="ServiceWaterHeatingPlant">
+ <xsd:annotation>
+ <xsd:documentation>
+ Container for all supply-side service hot water plant equipment: water heaters,
+ standalone storage tanks, solar thermal collectors, and desuperheaters.
+ One ServiceWaterSystem may have one or more ServiceWaterHeatingPlants to represent
+ separate plant configurations (primary + backup, domestic + process, etc.).
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="Name" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="Description" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="WaterHeaters" minOccurs="0">
+ <xsd:complexType>
+ <xsd:sequence>
+ <xsd:element ref="WaterHeater" maxOccurs="unbounded"/>
+ </xsd:sequence>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="StorageTanks" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Standalone storage tanks not integral to a specific water heater (e.g., separate preheat tanks for solar or desuperheater systems).</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:sequence>
+ <xsd:element ref="StorageTank" maxOccurs="unbounded"/>
+ </xsd:sequence>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="SolarThermalCollectors" minOccurs="0">
+ <xsd:complexType>
+ <xsd:sequence>
+ <xsd:element ref="SolarThermalCollector" maxOccurs="unbounded"/>
+ </xsd:sequence>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="DesuperheaterHeatRecoveries" minOccurs="0">
+ <xsd:complexType>
+ <xsd:sequence>
+ <xsd:element ref="DesuperheaterHeatRecovery" maxOccurs="unbounded"/>
+ </xsd:sequence>
+ </xsd:complexType>
+ </xsd:element>
+ </xsd:all>
+ <xsd:attribute name="id" type="xsd:ID" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+
+
+ <!-- ── ServiceWaterDistribution ──────────────────────────────── -->
+ <xsd:element name="ServiceWaterDistribution">
+ <xsd:annotation>
+ <xsd:documentation>
+ Describes the hot water distribution system: supply/return temperature settings,
+ recirculation strategy, drain heat recovery, and piping network.
+ Aligned with ASHRAE Standard 229P ServiceWaterHeatingDistributionSystem
+ for distribution-related fields.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="Name" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="Description" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="DesignSupplyTemperature" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Design hot water supply temperature at the point of use (°F or °C).
+ Per ASHRAE 229P service_water_heating_design_supply_temperature.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="DesignInletTemperature" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Design cold water mains temperature entering the heater (°F or °C).
+ Per ASHRAE 229P service_water_heating_design_inlet_temperature.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="EnteringWaterTempScheduleIdRef" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Schedule defining time-varying cold mains water temperature.
+ Critical for accurate annual SWH energy calculations.
+ Per ASHRAE 229P entering_water_mains_temperature_schedule.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="scheduleIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="IsCentralSystem" type="xsd:boolean" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ True if this is a central DHW system serving multiple dwelling units.
+ Affects ASHRAE 90.1 Appendix G baseline system type determination.
+ Per ASHRAE 229P is_central_system.
+ </xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="RecirculationControlType" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Recirculation pump control strategy. ASHRAE 90.1-2019 Section 7.4.4.3 requires
+ time-clock or demand controls for all new recirculation systems.
+ Per ASHRAE 229P recirculation_type.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="recirculationControlTypeEnum"/>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="RecirculationPumpPower" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Recirculation pump motor power (Watts). Per ASHRAE 229P recirculation_pump_power.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="powerUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="RecirculationScheduleIdRef" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Schedule for timer-controlled recirculation pump operation. Use scheduleType = WaterHeaterOperation.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="scheduleIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="AreRecircPumpMotorsInThermalZone" type="xsd:boolean" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ True if recirculation pump motors are within the conditioned thermal zone.
+ When true, pump heat is credited to the space (reduces heating load in winter).
+ Per ASHRAE 229P are_all_recirculation_pump_motors_in_thermal_zone.
+ </xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="DrainHeatRecoveryType" minOccurs="0">
+ <xsd:annotation><xsd:documentation>System-level DWHR type. Per ASHRAE 229P drain_heat_recovery_type.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="drainHeatRecoveryTypeEnum"/>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="DrainHeatRecoveryEfficiency" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Effectiveness of system-level DWHR (0–1). Per ASHRAE 229P drain_heat_recovery_efficiency.</xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="ServiceWaterPipings" minOccurs="0">
+ <xsd:complexType>
+ <xsd:sequence>
+ <xsd:element ref="ServiceWaterPiping" maxOccurs="unbounded"/>
+ </xsd:sequence>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="ServiceWaterZoneIds" minOccurs="0">
+ <xsd:annotation><xsd:documentation>References to ServiceWaterZone elements served by this distribution system.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:sequence>
+ <xsd:element name="ServiceWaterZoneId" maxOccurs="unbounded">
+ <xsd:complexType>
+ <xsd:attribute name="serviceWaterZoneIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ </xsd:sequence>
+ </xsd:complexType>
+ </xsd:element>
+ </xsd:all>
+ <xsd:attribute name="id" type="xsd:ID" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+
+
+ <!-- ── ServiceWaterSystem (TOP-LEVEL gbXML child) ────────────── -->
+ <xsd:element name="ServiceWaterSystem">
+ <xsd:annotation>
+ <xsd:documentation>
+ Top-level container for a complete service hot water system: plant (water heaters,
+ tanks, solar thermal, desuperheaters) and distribution (piping, recirculation).
+
+ STRUCTURAL PATTERN: Follows the AirSystem element pattern introduced in gbXML v7.03.
+ Multiple ServiceWaterSystem elements in one file represent separate systems
+ (domestic DHW, process water, pool/spa, laundry).
+
+ STANDARDS ALIGNMENT:
+ ASHRAE 229P: ServiceWaterHeatingDistributionSystem (organizing container)
+ Plant equipment and demand connections
+
+ ADD TO gbXML ROOT ELEMENT CONTENT MODEL:
+ &lt;xsd:element ref="ServiceWaterSystem" minOccurs="0" maxOccurs="unbounded"/&gt;
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="Name" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="Description" type="xsd:string" minOccurs="0"/>
+ <xsd:element ref="ServiceWaterHeatingPlant" minOccurs="0"/>
+ <xsd:element ref="ServiceWaterDistribution" minOccurs="0"/>
+ <xsd:element name="CADObjectId" minOccurs="0"/>
+ </xsd:all>
+ <xsd:attribute name="id" type="xsd:ID" use="required"/>
+ <xsd:attribute name="programIdRef" type="xsd:IDREF" use="optional"/>
+ </xsd:complexType>
+ </xsd:element>
+
+
+ <!-- ── ServiceWaterZone (TOP-LEVEL gbXML child) ──────────────── -->
+ <xsd:element name="ServiceWaterZone">
+ <xsd:annotation>
+ <xsd:documentation>
+ Demand-side grouping of spaces sharing a common hot water load profile and
+ ASHRAE 90.1 space-type classification. Analogous to the HVAC Zone element —
+ groups Space elements for SWH load assignment, links to a ServiceWaterSystem,
+ and carries the ASHRAE 90.1-2019 Table 7.8 space-type compliance parameter.
+
+ STRUCTURAL PATTERN: Follows the Zone element pattern for HVAC in gbXML.
+
+ ASHRAE 229P ALIGNMENT:
+ ServiceWaterHeatingSpaceType → ServiceWaterHeatingSpaceOptions2019ASHRAE901
+ is_central_system → on ServiceWaterDistribution
+ service_water_heating_uses → ServiceWaterLoad children of Space
+
+ ADD TO gbXML ROOT ELEMENT CONTENT MODEL:
+ &lt;xsd:element ref="ServiceWaterZone" minOccurs="0" maxOccurs="unbounded"/&gt;
+
+ SPACES reference their ServiceWaterZone via a ServiceWaterZoneId child element.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="Name" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="Description" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="ServiceWaterHeatingSpaceType" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ ASHRAE 90.1-2019 building/space category for SWH load determination.
+ COMPLIANCE PARAMETER aligned with ASHRAE 229P
+ ServiceWaterHeatingSpaceOptions2019ASHRAE901 enumeration and Table 7.8.
+ Used by Ruleset Checking Tools to determine baseline SWH loads and
+ mandatory equipment efficiency requirements for performance-path compliance.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="serviceWaterHeatingSpaceTypeEnum"/>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="ServiceWaterSystemId" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Reference to the ServiceWaterSystem element serving this zone.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="serviceWaterSystemIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="SpaceIds" minOccurs="0">
+ <xsd:annotation><xsd:documentation>References to the Space elements belonging to this ServiceWaterZone.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:sequence>
+ <xsd:element name="SpaceId" maxOccurs="unbounded">
+ <xsd:complexType>
+ <xsd:attribute name="spaceIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ </xsd:sequence>
+ </xsd:complexType>
+ </xsd:element>
+ </xsd:all>
+ <xsd:attribute name="id" type="xsd:ID" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+
+
+ <!-- ── ServiceWaterLoad (child of Space) ─────────────────────── -->
+ <xsd:element name="ServiceWaterLoad">
+ <xsd:annotation>
+ <xsd:documentation>
+ Service HOT water demand for a space: end-use type, quantity, schedule,
+ delivery temperature requirements, and drain heat recovery characteristics.
+
+ ADD AS OPTIONAL CHILD OF: Space element (0..unbounded)
+ Multiple ServiceWaterLoad elements per Space are allowed for different
+ use types (Domestic + FoodService + Laundry as separate elements).
+
+ ASHRAE 229P ALIGNMENT: ServiceWaterHeatingUse data group.
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="Name" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="Description" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="ServiceWaterLoadType" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Hot water end-use classification.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="serviceWaterLoadTypeEnum"/>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="WaterUseValue" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Hot water use quantity. Interpretation depends on WaterUseUnitsType attribute.
+ Examples: peak flow rate (GPM), daily volume (gal/day), per-person rate (gal/person/day).
+ Per ASHRAE 229P 'use' field and use_units.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="waterUseUnitsEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="WaterUseScheduleIdRef" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Fractional schedule (0–1) multiplying peak WaterUseValue to produce
+ time-varying hot water demand. Use scheduleType = HotWaterUseFraction.
+ Per ASHRAE 229P use_multiplier_schedule.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="scheduleIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="HotWaterSupplyTemperature" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Required hot water delivery temperature at this fixture/end use (°F or °C).
+ Per ASHRAE 229P hot_water_supply_temperature.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="InletColdWaterTemperature" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Cold water inlet temperature at this fixture. Used for mixed-water heat demand calculation.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="IsHeatRecoveredByDrain" type="xsd:boolean" minOccurs="0">
+ <xsd:annotation><xsd:documentation>True if drain waste heat recovery is present at this end use. Per ASHRAE 229P is_heat_recovered_by_drain.</xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="DrainHeatRecoveryType" minOccurs="0">
+ <xsd:annotation><xsd:documentation>DWHR device type at this end use. Per ASHRAE 229P drain_heat_recovery_type.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="drainHeatRecoveryTypeEnum"/>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="DrainHeatRecoveryEfficiency" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>DWHR effectiveness at this end use (0–1). Per ASHRAE 229P drain_heat_recovery_efficiency.</xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="ServiceWaterZoneId" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Reference to the ServiceWaterZone containing this load.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="serviceWaterZoneIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ </xsd:all>
+ <xsd:attribute name="id" type="xsd:ID" use="required"/>
+ <xsd:attribute name="programIdRef" type="xsd:IDREF" use="optional"/>
+ </xsd:complexType>
+ </xsd:element>
+
+
+ <!-- ── ColdWaterLoad (child of Space and Building) ───────────── -->
+ <xsd:element name="ColdWaterLoad">
+ <xsd:annotation>
+ <xsd:documentation>
+ Cold (ambient-temperature) water consumption: uses that require NO heating.
+ Covers irrigation, toilet/urinal flushing, cooling tower makeup, boiler makeup,
+ pool fill, cold process water, laundry rinse, vehicle wash, and fire suppression.
+
+ ADD AS OPTIONAL CHILD OF:
+ Space element (0..unbounded) — space-level fixture loads (flushing, etc.)
+ Building element (0..unbounded) — building-level loads (irrigation, cooling tower)
+
+ NO DIRECT ASHRAE 229P ANALOG: ASHRAE 229P focuses on heated water and energy use.
+ This element extends gbXML beyond the 229P energy compliance scope to support:
+ - Whole-building potable water budgeting
+ - LEED WE (Water Efficiency) credit calculations
+ - WELL Water feature requirements
+ - Water utility cost modeling
+ - Green building rating program water consumption documentation
+ </xsd:documentation>
+ </xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="Name" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="Description" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="ColdWaterLoadType" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Classification of the cold water end use.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="coldWaterLoadTypeEnum"/>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="WaterUseValue" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Cold water use quantity. Interpretation depends on the unit attribute.
+ For irrigation: gal/day or gal/ft²·year.
+ For flushing: gal/flush (use with UsesPerPersonPerDay) or gal/person/day.
+ For cooling tower: gal/day or gal/ton-hour of cooling.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="waterUseUnitsEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="WaterUseScheduleIdRef" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Fractional schedule (0–1) for time-varying cold water demand.
+ Use scheduleType = ColdWaterUseFraction.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="scheduleIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="IsReclaimedWater" type="xsd:boolean" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ True if this end use can be or is served by reclaimed/non-potable water
+ (greywater recycling, rainwater harvesting, on-site treated recycled water).
+ Used for potable vs. non-potable water consumption accounting in LEED WE Credit.
+ </xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="ReclaimedWaterFraction" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Fraction of this end use actually served by reclaimed water (0–1).
+ ReclaimedWaterFraction = 1.0 means 100% non-potable supply.
+ </xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <!-- Fixture-based fields (toilets, urinals, vehicle wash) -->
+ <xsd:element name="FlushVolumePerUse" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Flush or use volume per single event (gallons or liters per flush/use).
+ For ToiletFlushing: LEED baseline 1.6 gpf; HET 1.28 gpf; dual-flush average.
+ For UrinalFlushing: LEED baseline 1.0 gpf; HEU 0.5 gpf; waterless 0 gpf.
+ Combined with UsesPerPersonPerDay and occupancy to derive daily volume.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="volumeUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="UsesPerPersonPerDay" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Number of fixture uses per person per day.
+ Typical values: toilet 3–4 uses/person/day, urinal 2–3 uses/person/day.
+ Multiplied by occupancy count and FlushVolumePerUse for daily demand.
+ </xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <!-- Irrigation-specific fields -->
+ <xsd:element name="IrrigatedArea" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Landscaped or irrigated area (ft² or m²). Applicable when ColdWaterLoadType = Irrigation.
+ Used with IrrigationIntensity to compute annual irrigation water use.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" type="areaUnitEnum" use="optional"/>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="IrrigationIntensity" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Average annual irrigation application rate (gal/ft²·year or L/m²·year).
+ Used for annual water budget. LEED WE baseline: varies by climate zone
+ and plant type; typically 10–30 gal/ft²·year for typical U.S. conditions.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" use="optional">
+ <xsd:simpleType>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="GallonsPerSquareFootPerYear"/>
+ <xsd:enumeration value="LitersPerSquareMeterPerYear"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+ </xsd:attribute>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ <xsd:element name="IrrigationScheduleIdRef" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Fractional schedule for seasonal irrigation operation (e.g., no irrigation Nov–Mar in cold climates).</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:attribute name="scheduleIdRef" type="xsd:IDREF" use="required"/>
+ </xsd:complexType>
+ </xsd:element>
+ <!-- Cooling tower-specific fields -->
+ <xsd:element name="CoolingTowerCyclesOfConcentration" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Cycles of concentration (ratio of dissolved solids in blowdown water to makeup water).
+ Typical range: 3–10 cycles. Higher cycles = less blowdown = less makeup water.
+ Used to calculate blowdown volume: Blowdown = Evaporation / (Cycles - 1).
+ Applicable when ColdWaterLoadType = CoolingTowerMakeup.
+ </xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="CoolingTowerEvaporationRate" minOccurs="0">
+ <xsd:annotation><xsd:documentation>
+ Annual evaporation rate from the cooling tower (gal/year or L/year).
+ Typically estimated as 0.1% of circulated flow per °F of cooling range.
+ Used with CyclesOfConcentration to calculate total annual makeup water.
+ </xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:simpleContent>
+ <xsd:extension base="xsd:decimal">
+ <xsd:attribute name="unit" use="optional">
+ <xsd:simpleType>
+ <xsd:restriction base="xsd:string">
+ <xsd:enumeration value="GallonsPerYear"/>
+ <xsd:enumeration value="LitersPerYear"/>
+ </xsd:restriction>
+ </xsd:simpleType>
+ </xsd:attribute>
+ </xsd:extension>
+ </xsd:simpleContent>
+ </xsd:complexType>
+ </xsd:element>
+ </xsd:all>
+ <xsd:attribute name="id" type="xsd:ID" use="required"/>
+ <xsd:attribute name="programIdRef" type="xsd:IDREF" use="optional"/>
+ </xsd:complexType>
+ </xsd:element>
+
+
+ <!-- ── ServiceWaterDraw (discrete draw event) ──────────────────────── -->
+ <xsd:element name="ServiceWaterDraw">
+ <xsd:annotation><xsd:documentation>A single discrete hot water draw event. Child of ServiceWaterDrawProfile. Provide exactly one of {FlowRate + DurationMinutes, Volume} and exactly one of {MixedDeliveryTemperature, HotWaterFraction}.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="Name" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="Description" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="EndUse" minOccurs="0">
+ <xsd:complexType><xsd:simpleContent><xsd:extension base="serviceWaterDrawEndUseEnum"/></xsd:simpleContent></xsd:complexType>
+ </xsd:element>
+ <xsd:element name="StartHour" type="xsd:decimal" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Draw start as decimal hour of day (0 to 24).</xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="DurationMinutes" type="xsd:decimal" minOccurs="0"/>
+ <xsd:element name="FlowRate" minOccurs="0">
+ <xsd:complexType><xsd:simpleContent><xsd:extension base="xsd:decimal"><xsd:attribute name="unit" type="drawFlowUnitEnum" use="optional"/></xsd:extension></xsd:simpleContent></xsd:complexType>
+ </xsd:element>
+ <xsd:element name="Volume" minOccurs="0">
+ <xsd:complexType><xsd:simpleContent><xsd:extension base="xsd:decimal"><xsd:attribute name="unit" type="volumeUnitEnum" use="optional"/></xsd:extension></xsd:simpleContent></xsd:complexType>
+ </xsd:element>
+ <xsd:element name="MixedDeliveryTemperature" minOccurs="0">
+ <xsd:complexType><xsd:simpleContent><xsd:extension base="xsd:decimal"><xsd:attribute name="unit" type="temperatureUnitEnum" use="optional"/></xsd:extension></xsd:simpleContent></xsd:complexType>
+ </xsd:element>
+ <xsd:element name="HotWaterFraction" type="xsd:decimal" minOccurs="0"/>
+ <xsd:element name="EventId" type="xsd:string" minOccurs="0">
+ <xsd:annotation><xsd:documentation>Groups sub-draws into a single physical event for drain-heat-recovery simultaneity.</xsd:documentation></xsd:annotation>
+ </xsd:element>
+ <xsd:element name="IsHeatRecoveredByDrain" type="xsd:boolean" minOccurs="0"/>
+ <xsd:element name="DrainHeatRecoveryEfficiency" type="xsd:decimal" minOccurs="0"/>
+ </xsd:all>
+ <xsd:attribute name="id" type="xsd:ID" use="required"/>
+ <xsd:attribute name="programIdRef" type="xsd:IDREF" use="optional"/>
+ </xsd:complexType>
+ </xsd:element>
+
+ <!-- ── ServiceWaterDrawProfile (collection of draws for one day) ────── -->
+ <xsd:element name="ServiceWaterDrawProfile">
+ <xsd:annotation><xsd:documentation>A named, reusable collection of draw events representing one day type. Top-level gbXML child, referenced by ServiceWaterLoad via DrawProfileIdRef.</xsd:documentation></xsd:annotation>
+ <xsd:complexType>
+ <xsd:all>
+ <xsd:element name="Name" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="Description" type="xsd:string" minOccurs="0"/>
+ <xsd:element name="ServiceWaterDraws" minOccurs="0">
+ <xsd:complexType><xsd:sequence><xsd:element ref="ServiceWaterDraw" maxOccurs="unbounded"/></xsd:sequence></xsd:complexType>
+ </xsd:element>
+ <xsd:element name="ApplicabilityScheduleIdRef" minOccurs="0">
+ <xsd:complexType><xsd:attribute name="scheduleIdRef" type="xsd:IDREF" use="required"/></xsd:complexType>
+ </xsd:element>
+ </xsd:all>
+ <xsd:attribute name="id" type="xsd:ID" use="required"/>
+ <xsd:attribute name="programIdRef" type="xsd:IDREF" use="optional"/>
+ </xsd:complexType>
+ </xsd:element>
+
+</xsd:schema>

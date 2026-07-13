@@ -1,0 +1,315 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  gbXML SWH Extension Example: EnergyPlus Target
+  Scenario: 24-unit multifamily, central HPWH plant, recirculation loop
+
+  EnergyPlus consumes:
+    PRIMARY:  ServiceWaterLoad (peak x schedule) -> WaterUse:Equipment
+              WaterHeater (component detail)     -> WaterHeater:HeatPump:PumpedCondenser
+              StorageTank                        -> WaterHeater:Stratified (tank params)
+              ServiceWaterDistribution           -> WaterUse:Connections
+              ServiceWaterPiping (geometry)      -> PlantLoop pipe segments
+              Validation points / perf curves    -> WaterHeater performance tables
+    IGNORES:  DrawProfile (event-based draws)    -> not consumed
+              SegmentRole / BranchWasteVolume    -> not consumed (uses geometry only)
+              LoopHeatLoss / RecircDesignFlow    -> not consumed (computes from geometry)
+              ZoneAggregateDHWDemand             -> not consumed (sums per-Space loads)
+              SystemSeasonalEfficiency           -> not consumed (models components)
+-->
+<gbXML xmlns="http://www.gbxml.org/schema"
+       temperatureUnit="F" lengthUnit="Feet" volumeUnit="Gallons"
+       useSIUnitsForResults="false" version="7.03">
+
+  <!-- ================================================================
+       SCHEDULES (referenced by ID)
+       EnergyPlus: Schedule:Compact or Schedule:File
+       ================================================================ -->
+  <Schedule id="sch-dhw-weekday" type="Fraction">
+    <Name>DHW Weekday Use Profile</Name>
+    <!-- hourly fractions 0-1 modulating peak demand -->
+  </Schedule>
+  <Schedule id="sch-dhw-weekend" type="Fraction">
+    <Name>DHW Weekend Use Profile</Name>
+  </Schedule>
+  <Schedule id="sch-mains-temp" type="Temp">
+    <Name>Monthly Mains Water Temperature</Name>
+    <!-- monthly average mains temps per ASHRAE method -->
+  </Schedule>
+  <Schedule id="sch-wh-setpoint" type="Temp">
+    <Name>Water Heater Setpoint</Name>
+    <!-- constant 120F or scheduled reset -->
+  </Schedule>
+  <Schedule id="sch-recirc-pump" type="OnOff">
+    <Name>Recirculation Pump Timer</Name>
+  </Schedule>
+
+
+  <!-- ================================================================
+       SERVICE WATER SYSTEM
+       EnergyPlus: PlantLoop (DHW) + WaterHeater:* + WaterUse:Connections
+       ================================================================ -->
+  <ServiceWaterSystem id="sws-central-dhw">
+    <Name>Central Domestic Hot Water System</Name>
+
+    <!-- ── PLANT (supply side) ──────────────────────────────────── -->
+    <ServiceWaterHeatingPlant id="plant-central">
+      <Name>Central HPWH Plant</Name>
+
+      <!-- SystemSeasonalEfficiency: NOT consumed by EnergyPlus
+           (it models each component individually) -->
+
+      <WaterHeaters>
+
+        <!-- PRIMARY HPWH
+             EnergyPlus: WaterHeater:HeatPump:PumpedCondenser -->
+        <WaterHeater id="wh-hpwh-1">
+          <Name>Commercial HPWH Unit 1 (CO2)</Name>
+          <WaterHeaterType>CentralHeatPumpWaterHeater</WaterHeaterType>
+          <FuelSource>Electricity</FuelSource>
+          <EfficiencyMetricType>UniformEnergyFactor</EfficiencyMetricType>
+
+          <InputCapacity unit="BtuPerHour">18000</InputCapacity>
+          <RatedCapacity unit="BtuPerHour">54000</RatedCapacity>
+          <UniformEnergyFactor>3.40</UniformEnergyFactor>
+
+          <SetpointTemperature unit="Fahrenheit">120</SetpointTemperature>
+          <SetpointTemperatureScheduleIdRef scheduleIdRef="sch-wh-setpoint"/>
+          <CutInTemperatureDelta unit="Fahrenheit">12</CutInTemperatureDelta>
+
+          <!-- HPWH source zone (air-side heat source)
+               EnergyPlus: Inlet Air Zone Name -->
+          <CompressorZoneIdRef zoneIdRef="zone-mech-room"/>
+
+          <!-- HPWH source air configuration [GAP #5]
+               EnergyPlus: Inlet Air Configuration = Zone and Outdoor Air -->
+          <SourceAirConfiguration>DuctedMixed</SourceAirConfiguration>
+          <DuctedOutdoorAirFraction>0.7</DuctedOutdoorAirFraction>
+          <HPWHProductModelDesignation>Sanden_GEU-45HPA</HPWHProductModelDesignation>
+
+          <BackupHeaterFuelSource>Electricity</BackupHeaterFuelSource>
+          <BackupInputCapacity unit="BtuPerHour">15000</BackupInputCapacity>
+          <BackupSetpointTemperature unit="Fahrenheit">110</BackupSetpointTemperature>
+
+          <!-- Integral tank
+               EnergyPlus: WaterHeater:Stratified parameters -->
+          <StorageTank id="tank-hpwh-1">
+            <Name>HPWH 1 Integral Tank</Name>
+            <TankRole>Primary</TankRole>
+            <TankType>Stratified</TankType>
+            <StorageVolume unit="Gallons">119</StorageVolume>
+            <InsulationRValue unit="HrFt2FPerBtu">16</InsulationRValue>
+            <StandbyLossCoefficient unit="BtuPerHrF">1.8</StandbyLossCoefficient>
+            <TankZoneIdRef zoneIdRef="zone-mech-room"/>
+            <NumberOfNodes>12</NumberOfNodes>
+            <HeightToDiameterRatio>2.5</HeightToDiameterRatio>
+          </StorageTank>
+
+          <!-- HPWH performance validation points
+               EnergyPlus: CurveFit or Lookup Table -->
+          <HPWHCapacityValidationPoints>
+            <HPWHCapacityValidationPoint id="hpwh1-cap-vp1">
+              <AmbientDryBulbTemperature unit="Fahrenheit">50</AmbientDryBulbTemperature>
+              <InletWaterTemperature unit="Fahrenheit">58</InletWaterTemperature>
+              <Capacity unit="BtuPerHour">38000</Capacity>
+            </HPWHCapacityValidationPoint>
+            <HPWHCapacityValidationPoint id="hpwh1-cap-vp2">
+              <AmbientDryBulbTemperature unit="Fahrenheit">70</AmbientDryBulbTemperature>
+              <InletWaterTemperature unit="Fahrenheit">58</InletWaterTemperature>
+              <Capacity unit="BtuPerHour">54000</Capacity>
+            </HPWHCapacityValidationPoint>
+            <HPWHCapacityValidationPoint id="hpwh1-cap-vp3">
+              <AmbientDryBulbTemperature unit="Fahrenheit">95</AmbientDryBulbTemperature>
+              <InletWaterTemperature unit="Fahrenheit">58</InletWaterTemperature>
+              <Capacity unit="BtuPerHour">68000</Capacity>
+            </HPWHCapacityValidationPoint>
+          </HPWHCapacityValidationPoints>
+
+          <HPWHPowerValidationPoints>
+            <HPWHPowerValidationPoint id="hpwh1-pwr-vp1">
+              <AmbientDryBulbTemperature unit="Fahrenheit">50</AmbientDryBulbTemperature>
+              <InletWaterTemperature unit="Fahrenheit">58</InletWaterTemperature>
+              <InputPower unit="Watts">1400</InputPower>
+            </HPWHPowerValidationPoint>
+            <HPWHPowerValidationPoint id="hpwh1-pwr-vp2">
+              <AmbientDryBulbTemperature unit="Fahrenheit">70</AmbientDryBulbTemperature>
+              <InletWaterTemperature unit="Fahrenheit">58</InletWaterTemperature>
+              <InputPower unit="Watts">1250</InputPower>
+            </HPWHPowerValidationPoint>
+            <HPWHPowerValidationPoint id="hpwh1-pwr-vp3">
+              <AmbientDryBulbTemperature unit="Fahrenheit">95</AmbientDryBulbTemperature>
+              <InletWaterTemperature unit="Fahrenheit">58</InletWaterTemperature>
+              <InputPower unit="Watts">1100</InputPower>
+            </HPWHPowerValidationPoint>
+          </HPWHPowerValidationPoints>
+
+        </WaterHeater>
+
+        <!-- Second identical HPWH (staged) -->
+        <WaterHeater id="wh-hpwh-2">
+          <Name>Commercial HPWH Unit 2 (CO2)</Name>
+          <WaterHeaterType>CentralHeatPumpWaterHeater</WaterHeaterType>
+          <FuelSource>Electricity</FuelSource>
+          <EfficiencyMetricType>UniformEnergyFactor</EfficiencyMetricType>
+          <InputCapacity unit="BtuPerHour">18000</InputCapacity>
+          <RatedCapacity unit="BtuPerHour">54000</RatedCapacity>
+          <UniformEnergyFactor>3.40</UniformEnergyFactor>
+          <SetpointTemperature unit="Fahrenheit">120</SetpointTemperature>
+          <CompressorZoneIdRef zoneIdRef="zone-mech-room"/>
+          <BackupHeaterFuelSource>Electricity</BackupHeaterFuelSource>
+          <BackupInputCapacity unit="BtuPerHour">15000</BackupInputCapacity>
+          <StorageTank id="tank-hpwh-2">
+            <TankRole>Primary</TankRole>
+            <TankType>Stratified</TankType>
+            <StorageVolume unit="Gallons">119</StorageVolume>
+            <StandbyLossCoefficient unit="BtuPerHrF">1.8</StandbyLossCoefficient>
+            <TankZoneIdRef zoneIdRef="zone-mech-room"/>
+            <NumberOfNodes>12</NumberOfNodes>
+          </StorageTank>
+        </WaterHeater>
+
+      </WaterHeaters>
+
+      <!-- STANDALONE SWING TANK [GAP #4]
+           EnergyPlus: WaterHeater:Mixed (storage-only, no heating source)
+           downstream of the HPWH units, with temperature-maintenance control -->
+      <StorageTanks>
+        <StorageTank id="tank-swing">
+          <Name>Swing/Buffer Tank</Name>
+          <TankRole>Swing</TankRole>
+          <TankType>Mixed</TankType>
+          <StorageVolume unit="Gallons">120</StorageVolume>
+          <StandbyLossCoefficient unit="BtuPerHrF">2.1</StandbyLossCoefficient>
+          <TankLocation>ConditionedSpace</TankLocation>
+          <TankZoneIdRef zoneIdRef="zone-mech-room"/>
+          <LinkedPrimaryTankIdRef tankIdRef="tank-hpwh-1"/>
+          <SwingTankMaintenanceSetpoint unit="Fahrenheit">115</SwingTankMaintenanceSetpoint>
+        </StorageTank>
+      </StorageTanks>
+    </ServiceWaterHeatingPlant>
+
+
+    <!-- ── DISTRIBUTION ─────────────────────────────────────────── -->
+    <ServiceWaterDistribution id="dist-central">
+      <Name>Central Recirculation Loop</Name>
+      <DesignSupplyTemperature unit="Fahrenheit">120</DesignSupplyTemperature>
+      <DesignInletTemperature unit="Fahrenheit">50</DesignInletTemperature>
+      <EnteringWaterTempScheduleIdRef scheduleIdRef="sch-mains-temp"/>
+      <IsCentralSystem>true</IsCentralSystem>
+      <RecirculationControlType>Timer</RecirculationControlType>
+      <RecirculationPumpPower unit="Watts">90</RecirculationPumpPower>
+      <RecirculationScheduleIdRef scheduleIdRef="sch-recirc-pump"/>
+      <AreRecircPumpMotorsInThermalZone>false</AreRecircPumpMotorsInThermalZone>
+
+      <!-- Simplified distribution [GAP #3]: NOT consumed by EnergyPlus
+           (it uses pipe-by-pipe geometry), included for completeness -->
+      <SimplifiedDistributionType>Recirculating</SimplifiedDistributionType>
+      <DistributionSystemMultiplier>1.0</DistributionSystemMultiplier>
+
+      <!-- LoopHeatLoss / RecirculationDesignFlowRate: NOT consumed by
+           EnergyPlus (it computes losses from piping geometry below) -->
+
+      <!-- PIPING GEOMETRY
+           EnergyPlus: Pipe:Indoor / Pipe:Outdoor on PlantLoop branches
+           Note: SegmentRole/BranchWasteVolume are CSE-specific; EnergyPlus
+           uses the geometric fields (diameter, length, insulation, location) -->
+      <ServiceWaterPipings>
+        <ServiceWaterPiping id="pipe-supply-main">
+          <Name>Supply Main Riser</Name>
+          <NominalDiameter unit="Inches">1.25</NominalDiameter>
+          <PipeLength unit="Feet">140</PipeLength>
+          <InsulationRValue unit="HrFt2FPerBtu">4.3</InsulationRValue>
+          <InsulationThickness unit="Inches">1.0</InsulationThickness>
+          <PipingLocation>UnconditionedSpace</PipingLocation>
+          <IsRecirculationPiping>true</IsRecirculationPiping>
+        </ServiceWaterPiping>
+        <ServiceWaterPiping id="pipe-return-main">
+          <Name>Return Main</Name>
+          <NominalDiameter unit="Inches">0.75</NominalDiameter>
+          <PipeLength unit="Feet">140</PipeLength>
+          <InsulationRValue unit="HrFt2FPerBtu">3.1</InsulationRValue>
+          <PipingLocation>UnconditionedSpace</PipingLocation>
+          <IsRecirculationPiping>true</IsRecirculationPiping>
+        </ServiceWaterPiping>
+        <ServiceWaterPiping id="pipe-branch-typical">
+          <Name>Typical Unit Branch (x24)</Name>
+          <NominalDiameter unit="Inches">0.5</NominalDiameter>
+          <PipeLength unit="Feet">12</PipeLength>
+          <InsulationRValue unit="HrFt2FPerBtu">2.0</InsulationRValue>
+          <PipingLocation>ConditionedSpace</PipingLocation>
+          <IsRecirculationPiping>false</IsRecirculationPiping>
+        </ServiceWaterPiping>
+      </ServiceWaterPipings>
+    </ServiceWaterDistribution>
+
+  </ServiceWaterSystem>
+
+
+  <!-- ================================================================
+       SERVICE WATER ZONE
+       EnergyPlus: not a native concept; the exporter sums per-Space loads
+       and assigns them to WaterUse:Connections on the plant loop.
+       ================================================================ -->
+  <ServiceWaterZone id="swz-residential">
+    <Name>Residential DHW Zone</Name>
+    <ServiceWaterHeatingSpaceType>Multifamily</ServiceWaterHeatingSpaceType>
+    <ServiceWaterSystemId serviceWaterSystemIdRef="sws-central-dhw"/>
+    <SpaceIds>
+      <SpaceId spaceIdRef="space-unit-01"/>
+      <!-- ...spaceIdRef for units 02-24... -->
+    </SpaceIds>
+  </ServiceWaterZone>
+
+
+  <!-- ================================================================
+       SPACE-LEVEL LOADS (PRIMARY path for EnergyPlus)
+       Each ServiceWaterLoad -> one EnergyPlus WaterUse:Equipment object
+       with Peak Flow Rate and Flow Rate Fraction Schedule.
+       ================================================================ -->
+  <Space id="space-unit-01">
+    <Name>Dwelling Unit 01 (Representative)</Name>
+
+    <!-- Shower: 1.8 gpm peak, modulated by weekday schedule -->
+    <ServiceWaterLoad id="swl-unit01-shower">
+      <Name>Shower</Name>
+      <ServiceWaterLoadType>Domestic</ServiceWaterLoadType>
+      <WaterUseValue unit="VolumeFlowRate">1.8</WaterUseValue>
+      <WaterUseScheduleIdRef scheduleIdRef="sch-dhw-weekday"/>
+      <HotWaterSupplyTemperature unit="Fahrenheit">105</HotWaterSupplyTemperature>
+      <InletColdWaterTemperature unit="Fahrenheit">50</InletColdWaterTemperature>
+      <IsHeatRecoveredByDrain>true</IsHeatRecoveredByDrain>
+      <DrainHeatRecoveryType>Vertical</DrainHeatRecoveryType>
+      <DrainHeatRecoveryEfficiency>0.42</DrainHeatRecoveryEfficiency>
+      <!-- DrawProfileIdRef: NOT consumed by EnergyPlus -->
+    </ServiceWaterLoad>
+
+    <!-- Faucets: 1.0 gpm peak -->
+    <ServiceWaterLoad id="swl-unit01-faucet">
+      <Name>Kitchen and Lavatory Faucets</Name>
+      <ServiceWaterLoadType>Domestic</ServiceWaterLoadType>
+      <WaterUseValue unit="VolumeFlowRate">1.0</WaterUseValue>
+      <WaterUseScheduleIdRef scheduleIdRef="sch-dhw-weekday"/>
+      <HotWaterSupplyTemperature unit="Fahrenheit">110</HotWaterSupplyTemperature>
+    </ServiceWaterLoad>
+
+    <!-- Clothes washer: 5.8 gal/day -->
+    <ServiceWaterLoad id="swl-unit01-cwashr">
+      <Name>Clothes Washer</Name>
+      <ServiceWaterLoadType>Laundry</ServiceWaterLoadType>
+      <WaterUseValue unit="DailyVolume">5.8</WaterUseValue>
+      <WaterUseScheduleIdRef scheduleIdRef="sch-dhw-weekday"/>
+      <HotWaterSupplyTemperature unit="Fahrenheit">120</HotWaterSupplyTemperature>
+    </ServiceWaterLoad>
+
+    <!-- Dishwasher: 3.1 gal/day -->
+    <ServiceWaterLoad id="swl-unit01-dwashr">
+      <Name>Dishwasher</Name>
+      <ServiceWaterLoadType>Domestic</ServiceWaterLoadType>
+      <WaterUseValue unit="DailyVolume">3.1</WaterUseValue>
+      <WaterUseScheduleIdRef scheduleIdRef="sch-dhw-weekday"/>
+      <HotWaterSupplyTemperature unit="Fahrenheit">140</HotWaterSupplyTemperature>
+    </ServiceWaterLoad>
+
+    <ServiceWaterZoneId serviceWaterZoneIdRef="swz-residential"/>
+  </Space>
+
+</gbXML>

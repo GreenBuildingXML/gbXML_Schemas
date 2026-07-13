@@ -1,0 +1,238 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  gbXML SWH Extension Example: DOE-2.2 / eQUEST Target
+  Scenario: 24-unit multifamily, central HPWH plant, recirculation loop
+
+  DOE-2.2/eQUEST consumes:
+    PRIMARY:  ServiceWaterLoad (peak x schedule)   -> DHW load on CIRCULATION-LOOP
+              WaterHeater (simplified)              -> DW-HEATER (type, HIR, capacity)
+              StorageTank (volume, UA)              -> DW-HEATER tank params
+              LoopHeatLoss                          -> CIRCULATION-LOOP loss
+              RecirculationDesignFlowRate            -> CIRCULATION-LOOP PUMP sizing
+              SystemSeasonalEfficiency               -> DW-HEATER HIR (= 1/eff)
+    IGNORES:  DrawProfile (event-based draws)       -> not consumed
+              SegmentRole / BranchWasteVolume        -> not consumed
+              Per-segment piping geometry            -> not consumed (uses LoopHeatLoss)
+              ZoneAggregateDHWDemand                  -> not consumed (sums per-Space)
+              HPWH validation/performance points      -> simplified COP only
+-->
+<gbXML xmlns="http://www.gbxml.org/schema"
+       temperatureUnit="F" lengthUnit="Feet" volumeUnit="Gallons"
+       useSIUnitsForResults="false" version="7.03">
+
+  <!-- ================================================================
+       SCHEDULES
+       DOE-2.2: DAY-SCHEDULE / WEEK-SCHEDULE / SCHEDULE
+       ================================================================ -->
+  <Schedule id="sch-dhw-weekday" type="Fraction">
+    <Name>DHW Weekday Hourly Fractions</Name>
+    <!-- 24 hourly values 0-1 modulating peak flow
+         DOE-2.2: DAY-SCHEDULE-PD (TYPE = FRACTION) -->
+  </Schedule>
+  <Schedule id="sch-dhw-weekend" type="Fraction">
+    <Name>DHW Weekend Hourly Fractions</Name>
+  </Schedule>
+  <Schedule id="sch-mains-temp" type="Temp">
+    <Name>Monthly Mains Water Temperature</Name>
+    <!-- DOE-2.2: DHW-INLET-T schedule on DW-HEATER -->
+  </Schedule>
+  <Schedule id="sch-recirc-pump" type="OnOff">
+    <Name>Recirc Pump Timer</Name>
+    <!-- DOE-2.2: PUMP on CIRCULATION-LOOP availability -->
+  </Schedule>
+
+
+  <!-- ================================================================
+       SERVICE WATER SYSTEM
+       DOE-2.2: CIRCULATION-LOOP (TYPE = DHW)
+                DW-HEATER on the loop
+                PUMP on the loop
+       ================================================================ -->
+  <ServiceWaterSystem id="sws-central-dhw">
+    <Name>Central Domestic Hot Water System</Name>
+
+    <ServiceWaterHeatingPlant id="plant-central">
+      <Name>Central HPWH Plant</Name>
+
+      <!-- SystemSeasonalEfficiency (PRIMARY for DOE-2.2)
+           DOE-2.2: DW-HEATER HIR = 1 / 2.40 = 0.417
+           This aggregate COP accounts for cycling, standby, and part-load
+           so the DOE-2.2 DW-HEATER simplified model works correctly.
+           Value of 2.40 reflects annualized system COP including backup
+           resistance firing in cold months (rated HPWH COP is 3.40). -->
+      <SystemSeasonalEfficiency>2.40</SystemSeasonalEfficiency>
+
+      <WaterHeaters>
+        <!-- DOE-2.2: DW-HEATER
+             Only basic params consumed: type, fuel, capacity, efficiency.
+             DOE-2.2 has limited HPWH modeling; uses a COP-based approach.
+             DW-HEATER TYPE = HEAT-PUMP, FUEL-METER = ELEC-METER,
+             HEAT-INPUT-RATIO = 1/UEF = 0.294 (at rated; or use seasonal) -->
+        <WaterHeater id="wh-hpwh-combined">
+          <Name>Central HPWH Plant (2 units combined for DOE-2.2)</Name>
+          <WaterHeaterType>CentralHeatPumpWaterHeater</WaterHeaterType>
+          <FuelSource>Electricity</FuelSource>
+          <EfficiencyMetricType>UniformEnergyFactor</EfficiencyMetricType>
+
+          <!-- Combined capacity of 2 units -->
+          <InputCapacity unit="BtuPerHour">36000</InputCapacity>
+          <RatedCapacity unit="BtuPerHour">108000</RatedCapacity>
+          <UniformEnergyFactor>3.40</UniformEnergyFactor>
+
+          <SetpointTemperature unit="Fahrenheit">120</SetpointTemperature>
+
+          <!-- HPWH source zone
+               DOE-2.2: limited; modeler typically assigns
+               outdoor-air or zone-air source manually -->
+          <CompressorZoneIdRef zoneIdRef="zone-mech-room"/>
+
+          <!-- HPWH source air [GAP #5]: informational for DOE-2.2
+               (DOE-2.2 has limited HPWH source-air modeling) -->
+          <SourceAirConfiguration>DuctedMixed</SourceAirConfiguration>
+          <DuctedOutdoorAirFraction>0.7</DuctedOutdoorAirFraction>
+          <HPWHProductModelDesignation>Sanden_GEU-45HPA</HPWHProductModelDesignation>
+
+          <BackupHeaterFuelSource>Electricity</BackupHeaterFuelSource>
+          <BackupInputCapacity unit="BtuPerHour">30000</BackupInputCapacity>
+
+          <!-- Combined tank
+               DOE-2.2: DW-HEATER TANK-VOLUME, TANK-UA -->
+          <StorageTank id="tank-combined">
+            <Name>Combined Storage (2 x 119 gal)</Name>
+            <TankRole>Primary</TankRole>
+            <TankType>Mixed</TankType>
+            <StorageVolume unit="Gallons">238</StorageVolume>
+            <StandbyLossCoefficient unit="BtuPerHrF">3.6</StandbyLossCoefficient>
+            <TankLocation>ConditionedSpace</TankLocation>
+            <TankZoneIdRef zoneIdRef="zone-mech-room"/>
+          </StorageTank>
+
+          <!-- Validation points: NOT consumed by DOE-2.2 -->
+
+        </WaterHeater>
+      </WaterHeaters>
+
+      <!-- SWING TANK [GAP #4]: DOE-2.2 models as additional tank volume
+           on the DW-HEATER. Informational; DOE-2.2 combines into one tank. -->
+      <StorageTanks>
+        <StorageTank id="tank-swing">
+          <Name>Swing/Buffer Tank</Name>
+          <TankRole>Swing</TankRole>
+          <TankType>Mixed</TankType>
+          <StorageVolume unit="Gallons">120</StorageVolume>
+          <StandbyLossCoefficient unit="BtuPerHrF">2.1</StandbyLossCoefficient>
+          <TankZoneIdRef zoneIdRef="zone-mech-room"/>
+          <LinkedPrimaryTankIdRef tankIdRef="tank-combined"/>
+          <SwingTankMaintenanceSetpoint unit="Fahrenheit">115</SwingTankMaintenanceSetpoint>
+        </StorageTank>
+      </StorageTanks>
+    </ServiceWaterHeatingPlant>
+
+
+    <!-- ── DISTRIBUTION ─────────────────────────────────────────── -->
+    <ServiceWaterDistribution id="dist-central">
+      <Name>Central Recirculation Loop</Name>
+
+      <!-- DOE-2.2: DW-HEATER INLET-T or DHW-INLET-T schedule -->
+      <DesignSupplyTemperature unit="Fahrenheit">120</DesignSupplyTemperature>
+      <DesignInletTemperature unit="Fahrenheit">50</DesignInletTemperature>
+      <EnteringWaterTempScheduleIdRef scheduleIdRef="sch-mains-temp"/>
+
+      <IsCentralSystem>true</IsCentralSystem>
+
+      <!-- Simplified distribution [GAP #3]
+           DOE-2.2: informational (uses LoopHeatLoss), but useful for
+           eQUEST Wizard which selects system type to set defaults -->
+      <SimplifiedDistributionType>Recirculating</SimplifiedDistributionType>
+      <DistributionSystemMultiplier>1.0</DistributionSystemMultiplier>
+
+      <RecirculationControlType>Timer</RecirculationControlType>
+
+      <!-- DOE-2.2: PUMP MECH-EFF / MOTOR-EFF / HEAD
+           RecirculationPumpPower gives total watts for the loop pump -->
+      <RecirculationPumpPower unit="Watts">90</RecirculationPumpPower>
+      <RecirculationScheduleIdRef scheduleIdRef="sch-recirc-pump"/>
+
+      <!-- Part E fields: PRIMARY for DOE-2.2 / eQUEST -->
+
+      <!-- LoopHeatLoss: aggregate loop standby loss
+           DOE-2.2: CIRCULATION-LOOP LOOP-LOSS or modeled as
+           supplemental load on the DW-HEATER.
+           Computed from piping geometry: supply 140ft 1.25" R-4.3
+           + return 140ft 0.75" R-3.1 in unconditioned space at
+           ~55F ambient -> ~3,200 Btu/h total design loss -->
+      <LoopHeatLoss unit="BtuPerHour">3200</LoopHeatLoss>
+
+      <!-- RecirculationDesignFlowRate: total loop recirc flow
+           DOE-2.2: PUMP flow on the CIRCULATION-LOOP -->
+      <RecirculationDesignFlowRate unit="GallonsPerMinute">2.0</RecirculationDesignFlowRate>
+
+      <!-- Per-segment piping: NOT consumed by DOE-2.2 (uses
+           LoopHeatLoss above instead), but included for
+           EnergyPlus/CSE exporters that need geometry -->
+      <ServiceWaterPipings>
+        <ServiceWaterPiping id="pipe-supply-main">
+          <NominalDiameter unit="Inches">1.25</NominalDiameter>
+          <PipeLength unit="Feet">140</PipeLength>
+          <InsulationRValue unit="HrFt2FPerBtu">4.3</InsulationRValue>
+          <PipingLocation>UnconditionedSpace</PipingLocation>
+          <IsRecirculationPiping>true</IsRecirculationPiping>
+        </ServiceWaterPiping>
+        <ServiceWaterPiping id="pipe-return-main">
+          <NominalDiameter unit="Inches">0.75</NominalDiameter>
+          <PipeLength unit="Feet">140</PipeLength>
+          <InsulationRValue unit="HrFt2FPerBtu">3.1</InsulationRValue>
+          <PipingLocation>UnconditionedSpace</PipingLocation>
+          <IsRecirculationPiping>true</IsRecirculationPiping>
+        </ServiceWaterPiping>
+      </ServiceWaterPipings>
+    </ServiceWaterDistribution>
+
+  </ServiceWaterSystem>
+
+
+  <!-- ================================================================
+       SERVICE WATER ZONE
+       DOE-2.2: not a native concept; loads are attached to the loop.
+       Included for schema completeness.
+       ================================================================ -->
+  <ServiceWaterZone id="swz-residential">
+    <Name>Residential DHW Zone</Name>
+    <ServiceWaterHeatingSpaceType>Multifamily</ServiceWaterHeatingSpaceType>
+    <ServiceWaterSystemId serviceWaterSystemIdRef="sws-central-dhw"/>
+    <SpaceIds>
+      <SpaceId spaceIdRef="space-unit-01"/>
+    </SpaceIds>
+  </ServiceWaterZone>
+
+
+  <!-- ================================================================
+       SPACE-LEVEL LOADS (PRIMARY for DOE-2.2)
+       DOE-2.2: peak flow x hourly fraction schedule, summed across all
+       spaces on the CIRCULATION-LOOP.
+       Exporter aggregates all 24 units' loads into a single loop demand.
+       ================================================================ -->
+  <Space id="space-unit-01">
+    <Name>Dwelling Unit 01 (Representative of 24 units)</Name>
+
+    <!-- Combined domestic DHW load per unit
+         DOE-2.2: total peak flow assigned to the loop, multiplied by 24
+         Peak 1.8 gpm x 24 units = 43.2 gpm max simultaneous
+         (actual diversity handled by the schedule) -->
+    <ServiceWaterLoad id="swl-unit01-all">
+      <Name>All Domestic DHW (Combined)</Name>
+      <ServiceWaterLoadType>Domestic</ServiceWaterLoadType>
+      <WaterUseValue unit="VolumeFlowRate">1.8</WaterUseValue>
+      <WaterUseScheduleIdRef scheduleIdRef="sch-dhw-weekday"/>
+      <HotWaterSupplyTemperature unit="Fahrenheit">105</HotWaterSupplyTemperature>
+      <InletColdWaterTemperature unit="Fahrenheit">50</InletColdWaterTemperature>
+      <!-- DrawProfileIdRef: NOT consumed by DOE-2.2 -->
+      <!-- DWHR: NOT modeled by DOE-2.2; informational -->
+      <IsHeatRecoveredByDrain>true</IsHeatRecoveredByDrain>
+      <DrainHeatRecoveryEfficiency>0.42</DrainHeatRecoveryEfficiency>
+    </ServiceWaterLoad>
+
+    <ServiceWaterZoneId serviceWaterZoneIdRef="swz-residential"/>
+  </Space>
+
+</gbXML>
